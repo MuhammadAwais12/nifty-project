@@ -38,7 +38,8 @@ export function Tasks({ data }: { data: any }) {
   const milestoneName = (id: string) => data.milestones.find((m: any) => m.id === id);
   const openIds = useMemo(() => new Set(tasks.filter((t) => !t.completed_at).map((t) => t.id)), [tasks]);
   const isBlocked = (t: any) => !t.completed_at && (t.blocked_by || []).some((id: string) => openIds.has(id));
-  const shared = { data, projectId, visible, tasks, setTasks, openTask, milestoneName, milestone, isBlocked, canEdit };
+  const taskKey = data.project.key || '';
+  const shared = { data, projectId, visible, tasks, setTasks, openTask, milestoneName, milestone, isBlocked, canEdit, taskKey };
 
   return (
     <div className="flex h-full flex-col">
@@ -104,10 +105,12 @@ function AddTask({ projectId, statusId, milestoneId, dueDate, compact }: { proje
 }
 
 /* ───────────── board (kanban) ───────────── */
-function Card({ t, milestoneName, onOpen, blocked }: { t: any; milestoneName: (id: string) => any; onOpen: () => void; blocked?: boolean }) {
+function Card({ t, milestoneName, onOpen, blocked, taskKey }: { t: any; milestoneName: (id: string) => any; onOpen: () => void; blocked?: boolean; taskKey?: string }) {
   const m = t.milestone_id && milestoneName(t.milestone_id);
+  const ref = taskKey && t.number ? `${taskKey}-${t.number}` : '';
   return (
     <div onClick={onOpen} className={`card cursor-pointer p-3 hover:border-fg/25 ${t.completed_at ? 'opacity-70' : ''}`}>
+      {ref && <p className="mb-1 font-mono text-[10px] font-bold tracking-wide text-fg/40">{ref}</p>}
       {(m || (t.tags || []).length > 0) && (
         <div className="mb-1.5 flex flex-wrap gap-1">
           {m && <span className="chip text-white" style={{ background: m.color }}>{m.name}</span>}
@@ -131,7 +134,7 @@ function Card({ t, milestoneName, onOpen, blocked }: { t: any; milestoneName: (i
   );
 }
 
-function Board({ data, projectId, visible, tasks, setTasks, openTask, milestoneName, milestone, isBlocked, canEdit }: any) {
+function Board({ data, projectId, visible, tasks, setTasks, openTask, milestoneName, milestone, isBlocked, canEdit, taskKey }: any) {
   const [dragId, setDragId] = useState<string | null>(null);
   const [over, setOver] = useState<{ statusId: string; index: number } | null>(null);
   const [adding, setAdding] = useState(false);
@@ -215,7 +218,7 @@ function Board({ data, projectId, visible, tasks, setTasks, openTask, milestoneN
                       }}
                       className={dragId === t.id ? 'opacity-40' : ''}
                     >
-                      <Card t={t} milestoneName={milestoneName} onOpen={() => openTask(t.id)} blocked={isBlocked(t)} />
+                      <Card t={t} milestoneName={milestoneName} onOpen={() => openTask(t.id)} blocked={isBlocked(t)} taskKey={taskKey} />
                     </div>
                   </div>
                 );
@@ -244,7 +247,7 @@ function Board({ data, projectId, visible, tasks, setTasks, openTask, milestoneN
 }
 
 /* ───────────── list ───────────── */
-function ListView({ data, projectId, visible, openTask, milestoneName, milestone, isBlocked, canEdit }: any) {
+function ListView({ data, projectId, visible, openTask, milestoneName, milestone, isBlocked, canEdit, taskKey }: any) {
   return (
     <div className="h-full space-y-5 overflow-y-auto px-4 pb-6 sm:px-6">
       {data.statuses.map((s: any) => {
@@ -262,6 +265,7 @@ function ListView({ data, projectId, visible, openTask, milestoneName, milestone
                     <button disabled={!canEdit} onClick={() => act('task.update', { id: t.id, patch: { done: !t.completed_at } })} aria-label={t.completed_at ? 'Reopen task' : 'Complete task'}>
                       {t.completed_at ? <CheckCircle2 size={18} className="text-emerald-600" /> : <Circle size={18} className="text-fg/30 hover:text-fg/60" />}
                     </button>
+                    {taskKey && t.number && <span className="hidden shrink-0 font-mono text-[10px] font-bold text-fg/35 sm:inline">{taskKey}-{t.number}</span>}
                     <button onClick={() => openTask(t.id)} className={`min-w-0 flex-1 truncate text-left text-sm font-semibold ${t.completed_at ? 'text-fg/45 line-through' : ''}`}>{t.title}</button>
                     {isBlocked(t) && <span className="chip bg-amber-100 text-amber-800"><Lock size={10} /> Blocked</span>}
                     {t.recurrence && <span title={`Repeats ${t.recurrence}`} className="inline-flex text-fg/45"><Repeat size={13} /></span>}
@@ -461,7 +465,7 @@ function Timeline({ data, visible, openTask, isBlocked }: any) {
 }
 
 /* ───────────── swimlanes ───────────── */
-function Swimlanes({ data, visible, tasks, setTasks, openTask, milestoneName, isBlocked, canEdit }: any) {
+function Swimlanes({ data, visible, tasks, setTasks, openTask, milestoneName, isBlocked, canEdit, taskKey }: any) {
   const { users } = useApp();
   const [by, setBy] = useState<'assignee' | 'milestone'>('assignee');
   const [drag, setDrag] = useState<{ id: string; lane: string } | null>(null);
@@ -538,7 +542,7 @@ function Swimlanes({ data, visible, tasks, setTasks, openTask, milestoneName, is
                       <div key={t.id} draggable={canEdit} className={drag?.id === t.id ? 'opacity-40' : ''}
                         onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', t.id); setDrag({ id: t.id, lane: lane.id }); }}
                         onDragEnd={() => { setDrag(null); setOver(''); }}>
-                        <Card t={t} milestoneName={milestoneName} onOpen={() => openTask(t.id)} blocked={isBlocked(t)} />
+                        <Card t={t} milestoneName={milestoneName} onOpen={() => openTask(t.id)} blocked={isBlocked(t)} taskKey={taskKey} />
                       </div>
                     ))}
                   </div>

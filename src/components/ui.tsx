@@ -1,5 +1,6 @@
 'use client';
 import { createContext, useContext, useEffect, useRef, useState, ReactNode } from 'react';
+import { act, toast } from '@/lib/api';
 import { X, Flag, Loader2 } from 'lucide-react';
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
 
@@ -134,7 +135,7 @@ export function AvatarStack({ ids, size = 22, max = 3 }: { ids: string[]; size?:
   );
 }
 
-export function Modal({ open, onClose, title, children, wide }: { open: boolean; onClose: () => void; title?: ReactNode; children: ReactNode; wide?: boolean }) {
+export function Modal({ open, onClose, title, children, wide, xl }: { open: boolean; onClose: () => void; title?: ReactNode; children: ReactNode; wide?: boolean; xl?: boolean }) {
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
@@ -143,8 +144,8 @@ export function Modal({ open, onClose, title, children, wide }: { open: boolean;
   }, [open, onClose]);
   if (!open) return null;
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-scrim p-3 sm:p-8" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div role="dialog" aria-modal="true" className={`w-full ${wide ? 'max-w-4xl' : 'max-w-md'} rounded-2xl bg-surface shadow-pop`}>
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-scrim/50 p-3 sm:p-8" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+      <div role="dialog" aria-modal="true" className={`w-full ${xl ? 'max-w-6xl' : wide ? 'max-w-4xl' : 'max-w-md'} rounded-2xl bg-surface shadow-pop`}>
         {title !== undefined && (
           <div className="flex items-center justify-between border-b border-line px-5 py-3">
             <h2 className="text-base font-bold">{title}</h2>
@@ -280,6 +281,30 @@ export function confirmDelete(what: string) {
   return window.confirm(`Delete ${what}? This cannot be undone.`);
 }
 
+/** The people on a project, the people who are not, and a way to add them. */
+export function useProjectPeople(projectId: string, memberIds: string[]) {
+  const { users, me, canManage } = useApp();
+  const ids = memberIds || [];
+  const members = users.filter((u) => u.active && ids.includes(u.id));
+  const others = users.filter((u) => u.active && !ids.includes(u.id) && u.id !== me.id);
+  async function addToProject(u: UserT): Promise<boolean> {
+    if (!canManage) {
+      toast(`${u.name} is not on this project. Ask an admin or manager to add them.`);
+      return false;
+    }
+    const res = await act('member.set', { projectId, userId: u.id, on: true });
+    if (res) toast(`${u.name} added to this project`);
+    return !!res;
+  }
+  return {
+    members,
+    /** everyone else in the workspace — only offered to people who may add them */
+    others: canManage ? others : [],
+    mentionable: members.filter((u) => u.id !== me.id),
+    addToProject,
+  };
+}
+
 /* ───────────── @mentions ───────────── */
 const escapeRe = (v: string) => v.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -301,13 +326,22 @@ export function RichText({ text, className = '' }: { text: string; className?: s
 }
 
 /** Textarea that suggests people when you type @. Enter sends, Shift+Enter adds a line. */
-export function MentionInput({ value, onChange, onSubmit, people, placeholder, label, className = '', rows = 2 }: {
-  value: string; onChange: (v: string) => void; onSubmit: () => void; people: UserT[]; placeholder?: string; label: string; className?: string; rows?: number;
+export function MentionInput({ value, onChange, onSubmit, people, others = [], onPickOther, placeholder, label, className = '', rows = 2, onPaste }: {
+  value: string; onChange: (v: string) => void; onSubmit: () => void; people: UserT[];
+  /** People in the workspace who are not on this project yet. */
+  others?: UserT[];
+  /** Called before mentioning someone from `others`. Return false to cancel. */
+  onPickOther?: (u: UserT) => Promise<boolean> | boolean;
+  placeholder?: string; label: string; className?: string; rows?: number;
+  onPaste?: (e: React.ClipboardEvent) => void;
 }) {
   const ref = useRef<HTMLTextAreaElement>(null);
   const [query, setQuery] = useState<string | null>(null);
   const [index, setIndex] = useState(0);
-  const matches = query === null ? [] : people.filter((u) => u.name.toLowerCase().includes(query.toLowerCase())).slice(0, 6);
+  const hit = (u: UserT, q: string) => u.name.toLowerCase().includes(q.toLowerCase());
+  const inProject = query === null ? [] : people.filter((u) => hit(u, query)).slice(0, 6);
+  const outside = query === null ? [] : others.filter((u) => hit(u, query)).slice(0, 4);
+  const matches = [...inProject, ...outside];
 
   function detect(el: HTMLTextAreaElement) {
     const before = el.value.slice(0, el.selectionStart);
@@ -315,7 +349,11 @@ export function MentionInput({ value, onChange, onSubmit, people, placeholder, l
     setQuery(m ? m[1] : null);
     setIndex(0);
   }
-  function choose(u: UserT) {
+  async function choose(u: UserT) {
+    if (outside.some((o) => o.id === u.id) && onPickOther) {
+      const ok = await onPickOther(u);
+      if (!ok) { setQuery(null); return; }
+    }
     const el = ref.current!;
     const before = el.value.slice(0, el.selectionStart);
     const start = before.lastIndexOf('@');
@@ -332,7 +370,7 @@ export function MentionInput({ value, onChange, onSubmit, people, placeholder, l
     if (matches.length) {
       if (e.key === 'ArrowDown') { e.preventDefault(); return setIndex((index + 1) % matches.length); }
       if (e.key === 'ArrowUp') { e.preventDefault(); return setIndex((index - 1 + matches.length) % matches.length); }
-      if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); return choose(matches[index]); }
+      if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); return void choose(matches[index]); }
       if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); return setQuery(null); }
     }
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); onSubmit(); }
@@ -340,16 +378,27 @@ export function MentionInput({ value, onChange, onSubmit, people, placeholder, l
   return (
     <div className="relative flex-1">
       {matches.length > 0 && (
-        <div role="listbox" aria-label="Mention a teammate" className="absolute bottom-full left-0 z-40 mb-1 w-64 rounded-xl border border-line bg-surface p-1 shadow-pop">
-          {matches.map((u, i) => (
-            <button key={u.id} type="button" role="option" aria-selected={i === index} onMouseDown={(e) => { e.preventDefault(); choose(u); }}
-              className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm ${i === index ? 'bg-fg/5' : ''}`}>
-              <Avatar user={u} size={22} /> <span className="truncate font-medium">{u.name}</span>
-            </button>
-          ))}
+        <div role="listbox" aria-label="Mention a teammate" className="absolute bottom-full left-0 z-40 mb-1 w-72 rounded-xl border border-line bg-surface p-1 shadow-pop">
+          {matches.map((u, i) => {
+            const isOutside = i >= inProject.length;
+            return (
+              <div key={u.id}>
+                {isOutside && i === inProject.length && (
+                  <p className="px-2 pb-0.5 pt-1.5 text-[10px] font-bold uppercase tracking-wider text-fg/40">Not on this project yet</p>
+                )}
+                <button type="button" role="option" aria-selected={i === index} onMouseDown={(e) => { e.preventDefault(); void choose(u); }}
+                  className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm ${i === index ? 'bg-fg/5' : ''}`}>
+                  <Avatar user={u} size={22} />
+                  <span className="min-w-0 flex-1 truncate font-medium">{u.name}</span>
+                  {isOutside && <span className="shrink-0 text-[10px] font-bold uppercase tracking-wide text-ember">Add</span>}
+                </button>
+              </div>
+            );
+          })}
         </div>
       )}
       <textarea ref={ref} value={value} rows={rows} placeholder={placeholder} aria-label={label} className={`input ${className}`}
+        onPaste={onPaste}
         onChange={(e) => { onChange(e.target.value); detect(e.target); }} onKeyDown={onKeyDown} onBlur={() => setQuery(null)} />
     </div>
   );

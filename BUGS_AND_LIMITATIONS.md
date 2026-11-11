@@ -11,6 +11,8 @@ Nothing here is a crash or data loss. These are the rough edges worth knowing be
 | Timeline bars cannot be dragged | The Gantt view draws start and due dates and the arrows between dependencies, but you change dates inside the task. |
 | Uploads stop at 4 MB | Vercel functions cap request bodies at about 4.5 MB, and files live in Postgres. Use *Add link* for anything larger. |
 | Docs have no version history | Two people editing the same doc at the same time will overwrite each other — the last save wins. There is no lock and no merge. |
+| Replies are one level deep | A discussion message can have replies; a reply cannot have replies of its own. Deleting the parent removes the whole thread. |
+| Images are stored in the database | Same 4 MB cap as any other attachment, and they are served through the app rather than a CDN, so a very image-heavy project will feel it. |
 | Only invitations are emailed | And only if `RESEND_API_KEY` is set. Everything else is an in-app notification. |
 | One workspace per deployment | No workspace switcher. A second workspace means a second deployment with its own database. |
 | The logo is a placeholder | `src/components/Logo.tsx` and `src/app/icon.svg`. |
@@ -24,6 +26,8 @@ Nothing here is a crash or data loss. These are the rough edges worth knowing be
 - **Search is a substring match** (`like`), not full text. It finds "keyword" inside "Keyword map", but not a misspelling or a stem.
 - **Activity log is per project and keeps the last 25 entries** on the project Home. Older entries stay in the table but are not shown.
 - **Reports cover time and workload only.** No burndown, no CSV or PDF export.
+- **Task references do not move.** If you rename a project, existing task numbers keep the old key. Numbers are never reused after a task is deleted.
+- **No reactions on messages or comments**, and no read receipts in chat.
 - **Repeating tasks only repeat on completion.** If a weekly task is never completed, no copy is made. Completing a long-overdue one skips forward to the next future date rather than creating every missed copy.
 - **Timers are per person, one at a time.** Starting a timer stops any other timer you have running.
 

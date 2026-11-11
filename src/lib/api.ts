@@ -53,10 +53,13 @@ export function toast(message: string) {
   if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('tt-toast', { detail: message }));
 }
 
-export async function uploadFile(file: File, projectId: string, taskId?: string): Promise<boolean> {
+export type Uploaded = { id: string; name: string; mime: string; size: number };
+
+/** Uploads one file and returns the stored row, or null if it was rejected. */
+export async function uploadFile(file: File, projectId: string, taskId?: string): Promise<Uploaded | null> {
   if (file.size > 4 * 1024 * 1024) {
     toast(`"${file.name}" is larger than 4 MB. Add it as a link instead.`);
-    return false;
+    return null;
   }
   const form = new FormData();
   form.set('file', file);
@@ -66,9 +69,9 @@ export async function uploadFile(file: File, projectId: string, taskId?: string)
     const res = await fetch('/api/files', { method: 'POST', body: form });
     const json = await res.json().catch(() => null);
     if (!res.ok) throw new Error(json?.error || 'Upload failed. Please try again.');
-    return true;
+    return { mime: file.type, size: file.size, ...json.result } as Uploaded;
   } catch (e: any) {
     toast(e.message);
-    return false;
+    return null;
   }
 }

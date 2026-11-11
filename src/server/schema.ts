@@ -213,4 +213,37 @@ create table if not exists channel_reads (
 
 create index if not exists tasks_title_idx on tasks(lower(title));
 create index if not exists projects_name_idx on projects(lower(name));
+
+/* ── v4: task keys, threaded discussions, attachments on messages ── */
+alter table projects add column if not exists key text not null default '';
+alter table tasks add column if not exists number integer;
+alter table messages add column if not exists parent_id uuid references messages(id) on delete cascade;
+alter table messages add column if not exists edited_at timestamptz;
+alter table comments add column if not exists edited_at timestamptz;
+alter table files add column if not exists comment_id uuid references comments(id) on delete cascade;
+alter table files add column if not exists message_id uuid references messages(id) on delete cascade;
+alter table activity add column if not exists task_id uuid references tasks(id) on delete cascade;
+create index if not exists files_comment_idx on files(comment_id);
+create index if not exists files_message_idx on files(message_id);
+create index if not exists messages_parent_idx on messages(parent_id);
+create index if not exists activity_task_idx on activity(task_id);
+
+-- one-time: give every existing project a short key and every task a number
+update projects p set key = k.key from (
+  select id, upper(left(coalesce(nullif(regexp_replace(name, '[^a-zA-Z]', '', 'g'), ''), 'PRJ'), 3))
+    || case when row_number() over (
+         partition by upper(left(coalesce(nullif(regexp_replace(name, '[^a-zA-Z]', '', 'g'), ''), 'PRJ'), 3))
+         order by created_at, id) = 1 then '' else
+         row_number() over (
+           partition by upper(left(coalesce(nullif(regexp_replace(name, '[^a-zA-Z]', '', 'g'), ''), 'PRJ'), 3))
+           order by created_at, id)::text end as key
+  from projects
+) k where p.id = k.id and p.key = '';
+
+update tasks t set number = n.seq from (
+  select id, row_number() over (partition by project_id order by created_at, id) as seq
+  from tasks where parent_id is null
+) n where t.id = n.id and t.number is null
+  and not exists (select 1 from settings where key = 'task_numbers_migrated');
+insert into settings (key, value) values ('task_numbers_migrated', '1') on conflict (key) do nothing;
 `;

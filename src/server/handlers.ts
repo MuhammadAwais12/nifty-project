@@ -66,8 +66,30 @@ async function entity(user: User, table: 'tasks' | 'milestones' | 'docs' | 'file
 }
 
 /* ───────────── small helpers ───────────── */
-async function log(projectId: string, userId: string, message: string) {
-  await db()`insert into activity (project_id, user_id, text) values (${projectId}, ${userId}, ${message})`;
+async function log(projectId: string, userId: string, message: string, taskId?: string | null) {
+  await db()`insert into activity (project_id, user_id, text, task_id) values (${projectId}, ${userId}, ${message}, ${taskId || null})`;
+}
+
+/** A short per-project key like PHA, used for task numbers (PHA-63). */
+async function projectKey(name: string): Promise<string> {
+  const sql = db();
+  const base = (name.replace(/[^a-zA-Z]/g, '').slice(0, 3) || 'PRJ').toUpperCase();
+  for (let i = 0; i < 50; i++) {
+    const candidate = i === 0 ? base : `${base}${i + 1}`;
+    const [taken] = await sql`select 1 from projects where key = ${candidate}`;
+    if (!taken) return candidate;
+  }
+  return base + Date.now().toString().slice(-3);
+}
+
+/** Links freshly uploaded files to the comment or message they were posted with. */
+async function attach(fileIds: any, projectId: string, userId: string, column: 'comment_id' | 'message_id', rowId: string) {
+  const ids = uniq(Array.isArray(fileIds) ? fileIds : []);
+  if (!ids.length) return;
+  const sql = db();
+  await sql`update files set ${sql(column)} = ${rowId}
+    where id = any(${ids}::uuid[]) and project_id = ${projectId} and uploaded_by = ${userId}
+      and comment_id is null and message_id is null and task_id is null`;
 }
 
 async function notify(userIds: string[], actor: User, n: { projectId?: string | null; taskId?: string | null; kind: string; text: string }) {
@@ -269,8 +291,8 @@ export const handlers: Record<string, Handler> = {
     const sql = db();
     const name = need(p.name, 'Project name');
     const [{ n }] = await sql`select count(*)::int as n from projects`;
-    const [project] = await sql`insert into projects (name, description, color, portfolio, created_by)
-      values (${name}, ${text(p.description)}, ${text(p.color) || pickColor(n)}, ${text(p.portfolio, 80)}, ${user.id}) returning *`;
+    const [project] = await sql`insert into projects (name, description, color, portfolio, key, created_by)
+      values (${name}, ${text(p.description)}, ${text(p.color) || pickColor(n)}, ${text(p.portfolio, 80)}, ${await projectKey(name)}, ${user.id}) returning *`;
     await sql`insert into project_members (project_id, user_id) values (${project.id}, ${user.id})`;
     const names = ['To do', 'In progress', 'Review', 'Done'];
     for (let i = 0; i < names.length; i++) {
@@ -407,12 +429,15 @@ export const handlers: Record<string, Handler> = {
     } else statusId = null;
     const assignees = uniq(Array.isArray(p.assignees) ? p.assignees : []);
     const [{ pos }] = await sql`select coalesce(max(position), -1) + 1 as pos from tasks where project_id = ${p.projectId}`;
-    const [task] = await sql`insert into tasks (project_id, status_id, parent_id, milestone_id, title, description, start_date, due_date, assignees, position, completed_at, created_by)
+    const [{ num }] = p.parentId
+      ? [{ num: null }]
+      : await sql`select coalesce(max(number), 0) + 1 as num from tasks where project_id = ${p.projectId}`;
+    const [task] = await sql`insert into tasks (project_id, status_id, parent_id, milestone_id, title, description, start_date, due_date, assignees, position, number, completed_at, created_by)
       values (${p.projectId}, ${statusId}, ${p.parentId || null}, ${p.milestoneId || null}, ${title}, ${text(p.description, 20000)},
-        ${dateOrNull(p.startDate)}, ${dateOrNull(p.dueDate)}, ${sql.json(assignees)}, ${pos}, ${done ? sql`now()` : null}, ${user.id})
+        ${dateOrNull(p.startDate)}, ${dateOrNull(p.dueDate)}, ${sql.json(assignees)}, ${pos}, ${num}, ${done ? sql`now()` : null}, ${user.id})
       returning *`;
     if (!p.parentId) {
-      await log(p.projectId, user.id, `added task "${title}"`);
+      await log(p.projectId, user.id, `created task "${title}"`, task.id);
       await notify(assignees, user, { projectId: p.projectId, taskId: task.id, kind: 'assigned', text: `assigned you to "${title}"` });
     }
     return task;
@@ -421,15 +446,32 @@ export const handlers: Record<string, Handler> = {
   async 'task.get'(p, { user }) {
     const sql = db();
     const task = await entity(user, 'tasks', p.id);
-    const [subtasks, comments, files, time, blocking] = await Promise.all([
+    const [subtasks, comments, files, time, blocking, activity, entries] = await Promise.all([
       sql`select id, title, completed_at, position from tasks where parent_id = ${p.id} order by position`,
-      sql`select * from comments where task_id = ${p.id} order by created_at`,
-      sql`select id, name, mime, size, url, uploaded_by, created_at from files where task_id = ${p.id} order by created_at`,
-      sql`select coalesce(sum(case when ended_at is null then extract(epoch from now() - started_at) else seconds end), 0)::int as seconds
+      sql`select c.*, coalesce((select jsonb_agg(jsonb_build_object('id', f.id, 'name', f.name, 'mime', f.mime, 'size', f.size, 'url', f.url) order by f.created_at)
+            from files f where f.comment_id = c.id), '[]') as attachments
+        from comments c where c.task_id = ${p.id} order by c.created_at`,
+      sql`select id, name, mime, size, url, uploaded_by, created_at from files
+        where task_id = ${p.id} and comment_id is null order by created_at`,
+      sql`select coalesce(sum(seconds) filter (where ended_at is not null), 0)::int as seconds,
+          min(started_at) filter (where ended_at is null) as running_since
         from time_entries where task_id = ${p.id}`,
       sql`select id, title, completed_at from tasks where project_id = ${task.project_id} and jsonb_exists(blocked_by, ${String(p.id)})`,
+      sql`select id, user_id, text, created_at from activity where task_id = ${p.id} order by created_at limit 100`,
+      sql`select id, user_id, seconds, ended_at as created_at from time_entries
+        where task_id = ${p.id} and ended_at is not null order by ended_at limit 100`,
     ]);
-    return { task, subtasks, comments, files, seconds: time[0].seconds, blocking };
+    return {
+      task,
+      subtasks,
+      comments,
+      files,
+      seconds: time[0].seconds,
+      runningSince: time[0].running_since,
+      blocking,
+      activity,
+      entries,
+    };
   },
 
   async 'task.update'(p, { user }) {
@@ -489,7 +531,7 @@ export const handlers: Record<string, Handler> = {
     }
     if (!Object.keys(u).length) return task;
     const [row] = await sql`update tasks set ${sql(u)} where id = ${p.id} returning *`;
-    if (logLine) await log(task.project_id, user.id, logLine);
+    if (logLine) await log(task.project_id, user.id, logLine, task.id);
     if (newAssignees.length) await notify(newAssignees, user, { projectId: task.project_id, taskId: task.id, kind: 'assigned', text: `assigned you to "${row.title}"` });
     if (completing) await afterComplete(row, user);
     return row;
@@ -503,7 +545,7 @@ export const handlers: Record<string, Handler> = {
     const [row] = await sql`update tasks set status_id = ${s.id}, completed_at = ${s.is_done ? sql`coalesce(completed_at, now())` : null} where id = ${p.id} returning *`;
     await sql`update tasks t set position = v.pos from jsonb_array_elements_text(${sql.json(p.orderedIds || [])}) with ordinality as v(id, pos)
       where t.id = v.id::uuid and t.project_id = ${task.project_id}`;
-    if (task.status_id !== s.id) await log(task.project_id, user.id, s.is_done ? `completed "${task.title}"` : `moved "${task.title}" to ${s.name}`);
+    if (task.status_id !== s.id) await log(task.project_id, user.id, s.is_done ? `completed "${task.title}"` : `moved "${task.title}" to ${s.name}`, task.id);
     if (s.is_done && !task.completed_at) await afterComplete(row, user);
     return { ok: true };
   },
@@ -520,12 +562,26 @@ export const handlers: Record<string, Handler> = {
   async 'comment.create'(p, { user }) {
     const sql = db();
     const task = await entity(user, 'tasks', p.taskId);
-    const body = need(p.body, 'Comment');
+    const body = text(p.body, 20000);
+    const fileIds = uniq(Array.isArray(p.fileIds) ? p.fileIds : []);
+    if (!body && !fileIds.length) throw new HttpError(400, 'Write something or attach a file');
     const [row] = await sql`insert into comments (task_id, user_id, body) values (${p.taskId}, ${user.id}, ${body}) returning *`;
+    await attach(fileIds, task.project_id, user.id, 'comment_id', row.id);
     const tagged = await mentioned(body, task.project_id);
     await notify(tagged, user, { projectId: task.project_id, taskId: task.id, kind: 'mention', text: `mentioned you in a comment on "${task.title}"` });
     const followers = uniq([...(task.assignees || []), task.created_by]).filter((id) => !tagged.includes(id));
     await notify(followers, user, { projectId: task.project_id, taskId: task.id, kind: 'comment', text: `commented on "${task.title}"` });
+    return row;
+  },
+
+  async 'comment.update'(p, { user }) {
+    const sql = db();
+    const [c] = await sql`select c.*, t.project_id from comments c join tasks t on t.id = c.task_id where c.id = ${p.id}`;
+    if (!c) throw new HttpError(404, 'Comment not found');
+    await access(user, c.project_id);
+    if (c.user_id !== user.id) throw new HttpError(403, 'You can only edit your own comments');
+    const body = need(p.body, 'Comment');
+    const [row] = await sql`update comments set body = ${body}, edited_at = now() where id = ${p.id} returning *`;
     return row;
   },
 
@@ -539,7 +595,7 @@ export const handlers: Record<string, Handler> = {
     return { ok: true };
   },
 
-  /* ───────────── milestones ───────────── */
+  /* ───────────── milestones ───────────── */  /* ───────────── milestones ───────────── */
   async 'milestone.create'(p, { user }) {
     await access(user, p.projectId);
     const name = need(p.name, 'Milestone name');
@@ -577,20 +633,47 @@ export const handlers: Record<string, Handler> = {
   /* ───────────── discussions ───────────── */
   async 'message.list'(p, { user }) {
     await access(user, p.projectId);
-    const rows = await db()`select * from messages where project_id = ${p.projectId} order by created_at desc limit 300`;
+    const sql = db();
+    const rows = await sql`select m.*,
+        coalesce((select jsonb_agg(jsonb_build_object('id', f.id, 'name', f.name, 'mime', f.mime, 'size', f.size, 'url', f.url) order by f.created_at)
+          from files f where f.message_id = m.id), '[]') as attachments
+      from messages m where m.project_id = ${p.projectId} order by m.created_at desc limit 400`;
     return [...rows].reverse();
   },
 
   async 'message.create'(p, { user }) {
     const sql = db();
     await access(user, p.projectId);
-    const body = need(p.body, 'Message');
-    const [row] = await sql`insert into messages (project_id, user_id, body) values (${p.projectId}, ${user.id}, ${body}) returning *`;
+    const body = text(p.body, 20000);
+    const fileIds = uniq(Array.isArray(p.fileIds) ? p.fileIds : []);
+    if (!body && !fileIds.length) throw new HttpError(400, 'Write something or attach a file');
+    let parentId: string | null = null;
+    if (p.parentId) {
+      const [parent] = await sql`select id, user_id, body from messages where id = ${p.parentId} and project_id = ${p.projectId} and parent_id is null`;
+      if (!parent) throw new HttpError(404, 'That message is no longer there');
+      parentId = parent.id;
+    }
+    const [row] = await sql`insert into messages (project_id, user_id, body, parent_id) values (${p.projectId}, ${user.id}, ${body}, ${parentId}) returning *`;
+    await attach(fileIds, p.projectId, user.id, 'message_id', row.id);
+    const [project] = await sql`select name from projects where id = ${p.projectId}`;
     const tagged = await mentioned(body, p.projectId);
     if (tagged.length) {
-      const [project] = await sql`select name from projects where id = ${p.projectId}`;
       await notify(tagged, user, { projectId: p.projectId, kind: 'mention', text: `mentioned you in ${project.name} discussions` });
     }
+    if (parentId) {
+      // everyone already in the thread hears about a reply
+      const inThread = await sql`select distinct user_id from messages where (id = ${parentId} or parent_id = ${parentId}) and user_id is not null`;
+      await notify(inThread.map((r: any) => r.user_id).filter((id: string) => !tagged.includes(id)), user,
+        { projectId: p.projectId, kind: 'reply', text: `replied in ${project.name} discussions` });
+    }
+    return row;
+  },
+
+  async 'message.update'(p, { user }) {
+    const m = await entity(user, 'messages', p.id);
+    if (m.user_id !== user.id) throw new HttpError(403, 'You can only edit your own messages');
+    const body = need(p.body, 'Message');
+    const [row] = await db()`update messages set body = ${body}, edited_at = now() where id = ${p.id} returning *`;
     return row;
   },
 

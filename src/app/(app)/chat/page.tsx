@@ -4,6 +4,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { Check, Hash, MessagesSquare, Plus, Send, Users } from 'lucide-react';
 import { act, rpc, refresh, toast, useQ } from '@/lib/api';
 import { Avatar, Empty, MentionInput, Modal, RichText, Spinner, fmtDateTime, useApp, ymd, type UserT } from '@/components/ui';
+import { AttachButton, AttachmentList, PendingAttachments, useAttachments } from '@/components/Attach';
 
 /* ───────────── start a new direct or group chat ───────────── */
 function NewConversation({ onClose, onOpen }: { onClose: () => void; onOpen: (id: string) => void }) {
@@ -46,11 +47,12 @@ function NewConversation({ onClose, onOpen }: { onClose: () => void; onOpen: (id
 }
 
 /* ───────────── one thread: a project channel or a direct chat ───────────── */
-function Thread({ kind, id, title, subtitle, people }: { kind: 'channel' | 'dm'; id: string; title: string; subtitle?: string; people: UserT[] }) {
+function Thread({ kind, id, title, subtitle, people, projectId }: { kind: 'channel' | 'dm'; id: string; title: string; subtitle?: string; people: UserT[]; projectId?: string }) {
   const { users, me } = useApp();
   const query = kind === 'dm' ? { id } : { projectId: id };
   const { data } = useQ<any[]>(kind === 'dm' ? 'dm.messages' : 'message.list', query, { refreshInterval: 5000 });
   const [body, setBody] = useState('');
+  const attach = useAttachments(projectId || '');
   const end = useRef<HTMLDivElement>(null);
   const count = data?.length || 0;
 
@@ -65,10 +67,12 @@ function Thread({ kind, id, title, subtitle, people }: { kind: 'channel' | 'dm';
 
   async function send() {
     const text = body.trim();
-    if (!text) return;
+    if (!text && !attach.ids.length) return;
+    const fileIds = attach.ids;
     setBody('');
+    attach.reset();
     try {
-      await rpc(kind === 'dm' ? 'dm.send' : 'message.create', kind === 'dm' ? { id, body: text } : { projectId: id, body: text });
+      await rpc(kind === 'dm' ? 'dm.send' : 'message.create', kind === 'dm' ? { id, body: text } : { projectId: id, body: text, fileIds });
       refresh();
     } catch (e: any) {
       setBody(text);
@@ -101,7 +105,8 @@ function Thread({ kind, id, title, subtitle, people }: { kind: 'channel' | 'dm';
                   {!mine && <Avatar user={u} size={26} />}
                   <div className={`max-w-[75%] rounded-2xl px-3.5 py-2 ${mine ? 'rounded-br-md bg-ember text-white' : 'rounded-bl-md bg-surface shadow-card ring-1 ring-line'}`}>
                     {!mine && <p className="text-[11px] font-bold" style={{ color: u?.color }}>{u?.name || 'Former member'}</p>}
-                    <RichText text={m.body} className={`text-sm leading-relaxed ${mine ? '[&_a]:text-white [&_span]:bg-white/25 [&_span]:text-white' : ''}`} />
+                    {m.body && <RichText text={m.body} className={`text-sm leading-relaxed ${mine ? '[&_a]:text-white [&_span]:bg-white/25 [&_span]:text-white' : ''}`} />}
+                    <AttachmentList items={m.attachments || []} compact />
                     <p className={`mt-0.5 text-[10px] ${mine ? 'text-white/70' : 'text-fg/40'}`}>{fmtDateTime(m.created_at)}</p>
                   </div>
                 </div>
@@ -112,10 +117,16 @@ function Thread({ kind, id, title, subtitle, people }: { kind: 'channel' | 'dm';
         </div>
       </div>
       <div className="border-t border-line bg-surface px-4 py-3 sm:px-6">
-        <div className="mx-auto flex max-w-3xl items-end gap-2">
-          <MentionInput value={body} onChange={setBody} onSubmit={send} people={people} label="Message" rows={Math.min(6, Math.max(1, body.split('\n').length))}
-            placeholder="Write a message. Enter to send, Shift+Enter for a new line." className="resize-none" />
-          <button className="btn-primary h-[38px]" onClick={send} disabled={!body.trim()} aria-label="Send message"><Send size={15} /></button>
+        <div className="mx-auto max-w-3xl">
+          {kind === 'channel' && <PendingAttachments a={attach} />}
+          <div className="flex items-end gap-2">
+            <MentionInput value={body} onChange={setBody} onSubmit={send} people={people} label="Message" rows={Math.min(6, Math.max(1, body.split('\n').length))}
+              onPaste={kind === 'channel' ? attach.onPaste : undefined}
+              placeholder={kind === 'channel' ? 'Write a message. @ to mention, paste a screenshot to attach.' : 'Write a message. Enter to send, Shift+Enter for a new line.'}
+              className="resize-none" />
+            {kind === 'channel' && <AttachButton a={attach} label="Attach files to this message" />}
+            <button className="btn-primary h-[38px]" onClick={send} disabled={!body.trim() && !attach.ids.length} aria-label="Send message"><Send size={15} /></button>
+          </div>
         </div>
       </div>
     </div>
@@ -201,8 +212,8 @@ function ChatInner() {
           <button className="border-b border-line bg-surface px-4 py-2 text-left text-sm font-semibold text-ember md:hidden" onClick={() => open('/chat')}>← All conversations</button>
           <div className="min-h-0 flex-1">
             {channel ? (
-              <Thread key={`p${channel.id}`} kind="channel" id={channel.id} title={channel.name} subtitle="Project channel — same thread as Discussions"
-                people={users.filter((u) => (channel.member_ids || []).includes(u.id))} />
+              <Thread key={`p${channel.id}`} kind="channel" id={channel.id} projectId={channel.id} title={channel.name} subtitle="Project channel — same thread as Discussions"
+                people={users.filter((u) => (channel.member_ids || []).includes(u.id) && u.id !== me.id)} />
             ) : (
               <Thread key={`c${dm.id}`} kind="dm" id={dm.id} title={titleOf(dm)} subtitle={others(dm).length > 1 ? `${others(dm).length + 1} people` : undefined} people={others(dm)} />
             )}

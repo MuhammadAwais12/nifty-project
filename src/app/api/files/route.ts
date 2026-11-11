@@ -23,7 +23,7 @@ export async function POST(req: Request) {
     const data = Buffer.from(await file.arrayBuffer());
     const [row] = await db()`insert into files (project_id, task_id, name, mime, size, data, uploaded_by)
       values (${projectId}, ${taskId}, ${file.name.slice(0, 200)}, ${file.type || 'application/octet-stream'}, ${file.size}, ${data}, ${user.id})
-      returning id, name`;
+      returning id, name, mime, size`;
     return NextResponse.json({ ok: true, result: row });
   } catch (e) {
     console.error('[files]', e);

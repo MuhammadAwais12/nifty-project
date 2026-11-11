@@ -15,6 +15,8 @@ Built with Next.js 15 (App Router), React 19, TypeScript, Tailwind CSS and Postg
 5. **Create the owner account.** Open your site. The first person to sign up becomes the workspace owner. All tables are created automatically on that first load.
 6. **Invite the team.** Go to *Team → Invite people*, enter an email address, pick a role and send. Then add people to projects with each project's *Members* button.
 
+> **If the build fails with "No Output Directory named \"public\" found"**, Vercel did not recognise this as a Next.js app. That happens when `package.json` is not at the top level of the repository. Either move the files so `package.json`, `next.config.mjs` and `src/` sit at the repository root, or in Vercel go to *Settings → General → Root Directory*, set it to the folder that contains `package.json`, and redeploy. While you are there, check *Framework Preset* says **Next.js**. The included `vercel.json` sets this too, but only once Vercel is looking at the right folder.
+
 Using Supabase or another Postgres host instead? Add its connection string as `DATABASE_URL` under *Settings → Environment Variables* and redeploy. For Supabase use the **Transaction pooler** connection string.
 
 ### Updating an existing deployment
@@ -135,11 +137,11 @@ Any Postgres 13+ works, local or hosted. Tables are created on first request, so
 | Project → Home | Progress, upcoming deadlines, milestones, members and recent activity. |
 | Project → Tasks | Board, list, timeline (Gantt with dependency arrows), swimlanes by assignee or milestone, and calendar — all over the same records. |
 | Project → Milestones | A roadmap with dates and automatic progress from linked tasks. |
-| Project → Discussions | Threaded project conversation with @mentions; turn any message into a task. |
+| Project → Discussions | Project conversation with threaded replies, @mentions, inline images and attachments; edit or delete your own messages, and turn any message into a task. |
 | Project → Docs | Markdown documents that save as you type. |
 | Project → Files | Uploads up to 4 MB held in the database, plus links to anything bigger. |
 | Project → Time | Start/stop timer, manual entries and a per-person summary. |
-| Tasks | Subtasks, dependencies that mark a task Blocked, repeating tasks (daily / weekly / fortnightly / monthly), assignees, priorities, tags, dates, comments, attachments and tracked time. |
+| Tasks | Each task has its own reference (PHA-63), a field grid for assignees, tags, milestone, dates, priority and repeat, Subtasks and Attachments tabs, a live timer in the header, and a comments-and-activity panel on the right. Comments take images and files; paste a screenshot straight in. |
 | Notifications | Assignments, comments, @mentions, being added to a project, and being unblocked. Click one to jump straight to the task. |
 | Themes | Light and dark, remembered per browser; follows your system setting the first time. |
 
@@ -147,6 +149,10 @@ Any Postgres 13+ works, local or hosted. Tables are created on first request, so
 
 ## 7. Good to know
 
+- **Task references** like `VIS-14` come from a short project key plus a number. The key is made from the project name when you create it.
+- **Images** pasted or attached to a comment, a discussion message or a project chat message show inline, and open full size in a viewer. Files sit behind the same project permissions as everything else.
+- **Mentioning someone who is not on the project** offers to add them, if you are a manager or admin. Assigning works the same way.
+- **The task timer** runs live in the task header. Starting one stops any other timer you have going.
 - **Repeating tasks** create the next copy when you complete the current one, carrying over assignees, subtasks and the milestone. Monthly keeps the same day of the month and clamps it (31 Jan → 28 Feb).
 - **Dependencies** show a Blocked badge and notify the waiting assignees once the blocker is finished. Circular chains are refused.
 - **Uploads** are capped at 4 MB because Vercel functions cap request bodies around 4.5 MB. For anything larger, use *Add link*.
@@ -176,6 +182,7 @@ Said plainly, so nothing comes as a surprise later:
 
 | What you see | What it usually means |
 | --- | --- |
+| Build fails: `No Output Directory named "public" found` | Vercel is not treating this as a Next.js app. `package.json` must be at the repository root, or *Settings → General → Root Directory* must point at the folder holding it. Then check *Framework Preset* is **Next.js** and redeploy. |
 | "Could not reach the database…" | `DATABASE_URL` is missing or wrong in Vercel, or you have not redeployed since adding it. |
 | "Google sign-in is not configured" | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` are not set, or the deployment predates them. |
 | Google returns `redirect_uri_mismatch` | The redirect URI in the Google console does not match `https://YOUR-DOMAIN/api/auth/google/callback` exactly. |

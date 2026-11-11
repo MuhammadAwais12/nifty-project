@@ -1,12 +1,12 @@
 'use client';
 import { useState } from 'react';
-import { Check, Search } from 'lucide-react';
+import { Check, Mail, Search, UserPlus } from 'lucide-react';
 import { act } from '@/lib/api';
 import { Avatar, Modal, ROLE_LABEL, useApp } from './ui';
 
 /** Choose who can see and work on a project. */
-export function MembersModal({ projectId, members, onClose }: { projectId: string; members: string[]; onClose: () => void }) {
-  const { users, me } = useApp();
+export function MembersModal({ projectId, members, onClose, onInvite }: { projectId: string; members: string[]; onClose: () => void; onInvite?: () => void }) {
+  const { users, me, canManage } = useApp();
   const [q, setQ] = useState('');
   const list = users
     .filter((u) => u.active && u.name.toLowerCase().includes(q.trim().toLowerCase()))
@@ -36,6 +36,13 @@ export function MembersModal({ projectId, members, onClose }: { projectId: strin
           })}
           {!list.length && <p className="px-2 py-4 text-sm text-fg/45">No one matches that search.</p>}
         </div>
+        {canManage && onInvite && (
+          <button className="mt-3 flex w-full items-center gap-2.5 rounded-lg border border-dashed border-line px-2 py-2 text-left text-sm hover:border-ember hover:text-ember" onClick={onInvite}>
+            <span className="flex h-7 w-7 items-center justify-center rounded-full bg-fg/5"><UserPlus size={15} /></span>
+            <span className="flex-1 font-semibold">Invite someone who is not here yet</span>
+            <Mail size={14} className="text-fg/40" />
+          </button>
+        )}
         <div className="mt-4 flex justify-end">
           <button className="btn-primary" onClick={onClose}>Done</button>
         </div>

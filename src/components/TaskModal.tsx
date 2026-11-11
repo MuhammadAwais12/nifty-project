@@ -1,19 +1,51 @@
 'use client';
-import { useRef, useState } from 'react';
-import { Check, Paperclip, Play, Square, Trash2, X, Plus, Link2, Clock, CheckCircle2, Circle, Lock } from 'lucide-react';
-import { act, uploadFile, refresh, useQ } from '@/lib/api';
-import { Avatar, MentionInput, Menu, Modal, PRIORITIES, RichText, Spinner, confirmDelete, fmtDateTime, fmtDur, fmtSize, useApp } from './ui';
+import { useMemo, useState } from 'react';
+import {
+  Check, Paperclip, Play, Square, Trash2, X, Plus, Link2, CheckCircle2, Circle, Lock,
+  MessageSquare, Activity as ActivityIcon, Repeat, Flag, Calendar, Tag as TagIcon, ListTodo, Users, MoreHorizontal, Send, Pencil,
+} from 'lucide-react';
+import { act, rpc, refresh, toast, useQ } from '@/lib/api';
+import {
+  Avatar, AvatarStack, MentionInput, Menu, MenuItem, Modal, PRIORITIES, RichText, Spinner,
+  confirmDelete, fmtClock, fmtDateTime, fmtDur, fmtSize, useApp, useNow, useProjectPeople,
+} from './ui';
+import { AttachButton, AttachmentList, PendingAttachments, useAttachments } from './Attach';
+
+/* ───────────── one field in the grid under the title ───────────── */
+function Field({ icon: Icon, label, children }: { icon: any; label: string; children: React.ReactNode }) {
+  return (
+    <div className="min-w-0">
+      <p className="mb-1 flex items-center gap-1.5 text-xs font-semibold text-fg/45"><Icon size={13} /> {label}</p>
+      {children}
+    </div>
+  );
+}
 
 export function TaskModal({ id, onClose }: { id: string; onClose: () => void }) {
   const { users, me, timer, projects, canEdit, isAdmin, openTask } = useApp();
-  const { data, error } = useQ('task.get', { id });
+  const { data, error } = useQ('task.get', { id }, { refreshInterval: 10000 });
   const task = data?.task;
   const { data: pdata } = useQ(task ? 'project.get' : null, task ? { id: task.project_id } : undefined);
   const [comment, setComment] = useState('');
+  const [editing, setEditing] = useState<string | null>(null);
+  const [draft, setDraft] = useState('');
   const [sub, setSub] = useState('');
   const [tag, setTag] = useState('');
-  const [uploading, setUploading] = useState(false);
-  const fileRef = useRef<HTMLInputElement>(null);
+  const [tab, setTab] = useState<'subtasks' | 'attachments'>('subtasks');
+  const [showActivity, setShowActivity] = useState(true);
+  const attach = useAttachments(task?.project_id || '');
+  const people = useProjectPeople(task?.project_id || '', pdata?.members || []);
+  const now = useNow();
+
+  const feed = useMemo(() => {
+    if (!data) return [];
+    const items = [
+      ...data.comments.map((c: any) => ({ kind: 'comment' as const, at: c.created_at, data: c })),
+      ...(showActivity ? data.activity.map((a: any) => ({ kind: 'activity' as const, at: a.created_at, data: a })) : []),
+      ...(showActivity ? data.entries.map((e: any) => ({ kind: 'time' as const, at: e.created_at, data: e })) : []),
+    ];
+    return items.sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime());
+  }, [data, showActivity]);
 
   if (error) {
     return (
@@ -24,25 +56,26 @@ export function TaskModal({ id, onClose }: { id: string; onClose: () => void }) 
   }
   if (!task || !pdata) {
     return (
-      <Modal open onClose={onClose} wide>
+      <Modal open onClose={onClose} xl>
         <Spinner />
       </Modal>
     );
   }
 
-  const project = projects.find((p) => p.id === task.project_id);
+  const project = projects.find((p: any) => p.id === task.project_id);
   const update = (patch: any) => act('task.update', { id, patch });
   const done = !!task.completed_at;
   const assignees: string[] = task.assignees || [];
   const tags: string[] = task.tags || [];
   const running = timer?.task_id === id;
-  const memberIds: string[] = pdata.members || [];
-  const activeUsers = users.filter((u) => (u.active && memberIds.includes(u.id)) || assignees.includes(u.id));
-  const mentionable = users.filter((u) => u.active && u.id !== me.id && (memberIds.includes(u.id) || u.role === 'owner' || u.role === 'admin'));
+  const assignable = users.filter((u) => u.active && ((pdata.members || []).includes(u.id) || assignees.includes(u.id)));
   const blockedBy: string[] = task.blocked_by || [];
   const siblings: any[] = pdata.tasks.filter((t: any) => t.id !== id);
   const blockers = blockedBy.map((b) => siblings.find((t) => t.id === b)).filter(Boolean);
   const waiting = blockers.some((b: any) => !b.completed_at) && !task.completed_at;
+  const ref = task.number ? `${pdata.project.key || 'TSK'}-${task.number}` : '';
+  const liveSeconds = data.seconds + (data.runningSince ? Math.max(0, (now - new Date(data.runningSince).getTime()) / 1000) : 0);
+  const subDone = data.subtasks.filter((s: any) => s.completed_at).length;
 
   async function addSub(e: React.FormEvent) {
     e.preventDefault();
@@ -51,17 +84,30 @@ export function TaskModal({ id, onClose }: { id: string; onClose: () => void }) 
     await act('task.create', { projectId: task.project_id, parentId: id, title: sub });
   }
   async function addComment() {
-    if (!comment.trim()) return;
+    if (!comment.trim() && !attach.ids.length) return;
     const body = comment;
+    const fileIds = attach.ids;
     setComment('');
-    await act('comment.create', { taskId: id, body });
+    attach.reset();
+    try {
+      await rpc('comment.create', { taskId: id, body, fileIds });
+      refresh();
+    } catch (e: any) {
+      setComment(body);
+      toast(e.message);
+    }
   }
-  async function onFiles(list: FileList | null) {
+  async function saveEdit(commentId: string) {
+    const body = draft.trim();
+    setEditing(null);
+    if (body) await act('comment.update', { id: commentId, body });
+  }
+  async function onTaskFiles(list: FileList | null) {
     if (!list?.length) return;
-    setUploading(true);
-    for (const f of Array.from(list)) await uploadFile(f, task.project_id, id);
-    setUploading(false);
-    if (fileRef.current) fileRef.current.value = '';
+    for (const f of Array.from(list)) {
+      const row = await (await import('@/lib/api')).uploadFile(f, task.project_id, id);
+      if (!row) break;
+    }
     refresh();
   }
   async function addLink() {
@@ -74,281 +120,350 @@ export function TaskModal({ id, onClose }: { id: string; onClose: () => void }) 
     await act('task.delete', { id });
   }
 
-  const subDone = data.subtasks.filter((s: any) => s.completed_at).length;
-
   return (
-    <Modal open onClose={onClose} wide>
-      <div className="flex items-center justify-between border-b border-line px-5 py-3">
-        <div className="flex min-w-0 items-center gap-2 text-sm text-fg/55">
-          <span className="h-2.5 w-2.5 shrink-0 rounded-[4px]" style={{ background: project?.color }} />
-          <span className="truncate font-semibold">{project?.name}</span>
+    <Modal open onClose={onClose} xl>
+      {/* ───── header bar ───── */}
+      <div className="flex items-center gap-2 border-b border-line px-3 py-2">
+        <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
+          {ref && <span className="shrink-0 rounded-md bg-fg/5 px-2 py-1 font-mono text-[11px] font-bold text-fg/60">{ref}</span>}
+          <select
+            aria-label="List" disabled={!canEdit} value={task.status_id || ''} onChange={(e) => update({ status_id: e.target.value })}
+            className="min-w-0 max-w-[140px] shrink rounded-md border border-line bg-surface px-2 py-1 text-xs font-semibold focus:border-ember focus:outline-none disabled:opacity-60"
+          >
+            {pdata.statuses.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+          {waiting && <span className="chip shrink-0 bg-amber-500/15 text-amber-600"><Lock size={11} /> Blocked</span>}
+          <span className="hidden min-w-0 items-center gap-1.5 text-xs text-fg/45 lg:flex">
+            <span className="h-2 w-2 shrink-0 rounded-[3px]" style={{ background: project?.color }} />
+            <span className="truncate">{pdata.project.name}</span>
+          </span>
         </div>
-        <div className="flex items-center gap-1">
-          {waiting && <span className="chip bg-amber-100 text-amber-800"><Lock size={11} /> Blocked</span>}
+
+        <div className="flex shrink-0 items-center gap-1 sm:gap-1.5">
+          <span className={`hidden items-center gap-1.5 rounded-lg px-2 py-1 font-mono text-sm font-bold tabular-nums sm:flex ${data.runningSince ? 'bg-ember/15 text-ember' : 'text-fg/55'}`}>
+            {fmtClock(liveSeconds)}
+          </span>
+          {canEdit && (running ? (
+            <button className="icon-btn text-ember" onClick={() => act('time.stop')} aria-label="Stop timer" title="Stop timer"><Square size={15} fill="currentColor" /></button>
+          ) : (
+            <button className="icon-btn" onClick={() => act('time.start', { taskId: id })} aria-label="Start timer" title="Start timer"><Play size={15} fill="currentColor" /></button>
+          ))}
+          <span className="hidden sm:inline"><AvatarStack ids={assignees} size={24} max={3} /></span>
           {canEdit && (
-            <>
-              <button className={`btn ${done ? 'bg-emerald-50 text-emerald-700' : 'btn-outline'}`} onClick={() => update({ done: !done })}>
-                <Check size={14} /> {done ? 'Completed' : 'Mark complete'}
-              </button>
-              <button className="icon-btn" onClick={remove} aria-label="Delete task" title="Delete task"><Trash2 size={15} /></button>
-            </>
+            <button className={`btn ${done ? 'bg-emerald-500/15 text-emerald-600' : 'btn-outline'}`} onClick={() => update({ done: !done })}>
+              <Check size={14} /> <span className="hidden sm:inline">{done ? 'Completed' : 'Mark complete'}</span>
+            </button>
           )}
-          <button className="icon-btn" onClick={onClose} aria-label="Close"><X size={16} /></button>
+          {canEdit && (
+            <Menu trigger={<button className="icon-btn" aria-label="Task options"><MoreHorizontal size={17} /></button>}>
+              {(close) => (
+                <>
+                  <MenuItem onClick={() => { close(); addLink(); }}><Link2 size={15} /> Add a link</MenuItem>
+                  <MenuItem danger onClick={() => { close(); remove(); }}><Trash2 size={15} /> Delete task</MenuItem>
+                </>
+              )}
+            </Menu>
+          )}
+          <button className="icon-btn" onClick={onClose} aria-label="Close"><X size={17} /></button>
         </div>
       </div>
 
-      <div className="grid gap-0 md:grid-cols-[1fr_300px]">
-        {/* main column */}
-        <div className="min-w-0 space-y-6 p-5">
-          <fieldset disabled={!canEdit} className="m-0 min-w-0 space-y-6 border-0 p-0">
-          <div>
+      <div className="grid max-h-[78vh] grid-cols-1 lg:grid-cols-[1fr_400px]">
+        {/* ───── left: the task itself ───── */}
+        <div className="min-w-0 overflow-y-auto p-5">
+          <fieldset disabled={!canEdit} className="m-0 min-w-0 border-0 p-0">
+            <div className="flex items-start gap-2">
+              <button
+                className="mt-1.5 shrink-0" onClick={() => update({ done: !done })} aria-label={done ? 'Reopen task' : 'Mark complete'}
+              >
+                {done ? <CheckCircle2 size={20} className="text-emerald-600" /> : <Circle size={20} className="text-fg/25 hover:text-fg/50" />}
+              </button>
+              <textarea
+                key={`t-${task.id}`} defaultValue={task.title} rows={1} aria-label="Task title"
+                className={`w-full resize-none rounded-lg border border-transparent bg-transparent px-2 py-1 text-xl font-extrabold tracking-tight hover:border-line focus:border-ember focus:outline-none ${done ? 'text-fg/50 line-through' : ''}`}
+                onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), (e.target as HTMLTextAreaElement).blur())}
+                onBlur={(e) => {
+                  const v = e.target.value.trim();
+                  if (v && v !== task.title) update({ title: v });
+                  else e.target.value = task.title;
+                }}
+              />
+            </div>
             <textarea
-              key={`t-${task.id}`}
-              defaultValue={task.title}
-              rows={1}
-              aria-label="Task title"
-              className="w-full resize-none rounded-lg border border-transparent px-2 py-1 text-xl font-extrabold tracking-tight hover:border-line focus:border-ember focus:outline-none"
-              onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), (e.target as HTMLTextAreaElement).blur())}
-              onBlur={(e) => {
-                const v = e.target.value.trim();
-                if (v && v !== task.title) update({ title: v });
-                else e.target.value = task.title;
-              }}
-            />
-            <textarea
-              key={`d-${task.id}`}
-              defaultValue={task.description}
-              aria-label="Description"
-              placeholder="Add a description…"
-              className="mt-1 min-h-[90px] w-full rounded-lg border border-transparent px-2 py-1.5 text-sm leading-relaxed hover:border-line focus:border-ember focus:outline-none"
+              key={`d-${task.id}`} defaultValue={task.description} aria-label="Description" placeholder="Add a task description…"
+              className="mt-1 min-h-[72px] w-full rounded-lg border border-transparent bg-transparent px-2 py-1.5 text-sm leading-relaxed hover:border-line focus:border-ember focus:outline-none"
               onBlur={(e) => e.target.value !== task.description && update({ description: e.target.value })}
             />
+
+            {/* field grid */}
+            <div className="mt-4 grid grid-cols-2 gap-x-5 gap-y-4 border-y border-line py-4 sm:grid-cols-3">
+              <Field icon={Users} label="Assignees">
+                <div className="flex flex-wrap items-center gap-1">
+                  {assignees.map((uid) => {
+                    const u = users.find((x) => x.id === uid);
+                    return (
+                      <span key={uid} className="inline-flex items-center gap-1 rounded-full bg-fg/5 py-0.5 pl-0.5 pr-1.5 text-xs font-semibold">
+                        <Avatar user={u} size={18} ring={false} /> {u?.name.split(' ')[0] || '—'}
+                        <button onClick={() => update({ assignees: assignees.filter((x) => x !== uid) })} aria-label={`Remove ${u?.name}`}><X size={11} /></button>
+                      </span>
+                    );
+                  })}
+                  <Menu align="left" trigger={<button className="icon-btn h-6 w-6 border border-dashed border-fg/25" aria-label="Add assignee"><Plus size={13} /></button>}>
+                    {(close) => (
+                      <div className="max-h-72 w-60 overflow-y-auto">
+                        {assignable.map((u) => {
+                          const on = assignees.includes(u.id);
+                          return (
+                            <button key={u.id} onClick={() => update({ assignees: on ? assignees.filter((x) => x !== u.id) : [...assignees, u.id] })}
+                              className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm hover:bg-fg/5">
+                              <Avatar user={u} size={22} /> <span className="flex-1 truncate">{u.name}</span> {on && <Check size={14} className="text-ember" />}
+                            </button>
+                          );
+                        })}
+                        {people.others.length > 0 && <p className="px-2 pb-0.5 pt-2 text-[10px] font-bold uppercase tracking-wider text-fg/40">Add to this project</p>}
+                        {people.others.map((u) => (
+                          <button key={u.id} onClick={async () => { close(); if (await people.addToProject(u)) await update({ assignees: [...assignees, u.id] }); }}
+                            className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm hover:bg-fg/5">
+                            <Avatar user={u} size={22} /> <span className="flex-1 truncate">{u.name}</span>
+                            <span className="text-[10px] font-bold uppercase tracking-wide text-ember">Add</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </Menu>
+                </div>
+              </Field>
+
+              <Field icon={TagIcon} label="Tags">
+                <div className="flex flex-wrap gap-1">
+                  {tags.map((t) => (
+                    <span key={t} className="chip bg-fg/10 text-fg/70">
+                      {t}<button onClick={() => update({ tags: tags.filter((x) => x !== t) })} aria-label={`Remove tag ${t}`}><X size={11} /></button>
+                    </span>
+                  ))}
+                </div>
+                <form onSubmit={(e) => { e.preventDefault(); const v = tag.trim(); if (v && !tags.includes(v)) update({ tags: [...tags, v] }); setTag(''); }}>
+                  <input value={tag} onChange={(e) => setTag(e.target.value)} placeholder="Add" aria-label="New tag"
+                    className="mt-1 w-full rounded-md border border-transparent bg-transparent px-1 py-1 text-sm placeholder:text-fg/35 hover:border-line focus:border-ember focus:outline-none" />
+                </form>
+              </Field>
+
+              <Field icon={ListTodo} label="Milestone">
+                <select aria-label="Milestone" className="-ml-1 w-full rounded-md border border-transparent bg-transparent px-1 py-1 text-sm hover:border-line focus:border-ember focus:outline-none"
+                  value={task.milestone_id || ''} onChange={(e) => update({ milestone_id: e.target.value })}>
+                  <option value="">None</option>
+                  {pdata.milestones.map((m: any) => <option key={m.id} value={m.id}>{m.name}</option>)}
+                </select>
+              </Field>
+
+              <Field icon={Calendar} label="Dates">
+                <div className="flex flex-wrap items-center gap-1">
+                  <input type="date" aria-label="Start date" className="w-full rounded-md border border-transparent bg-transparent px-1 py-1 text-[13px] hover:border-line focus:border-ember focus:outline-none"
+                    value={task.start_date || ''} onChange={(e) => update({ start_date: e.target.value })} />
+                  <span className="text-fg/30">→</span>
+                  <input type="date" aria-label="Due date" className="w-full rounded-md border border-transparent bg-transparent px-1 py-1 text-[13px] hover:border-line focus:border-ember focus:outline-none"
+                    value={task.due_date || ''} onChange={(e) => update({ due_date: e.target.value })} />
+                </div>
+              </Field>
+
+              <Field icon={Flag} label="Priority">
+                <select aria-label="Priority" className="-ml-1 w-full rounded-md border border-transparent bg-transparent px-1 py-1 text-sm hover:border-line focus:border-ember focus:outline-none"
+                  value={task.priority} onChange={(e) => update({ priority: e.target.value })}>
+                  {Object.entries(PRIORITIES).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+                </select>
+              </Field>
+
+              <Field icon={Repeat} label="Repeat">
+                <select aria-label="Repeat" className="-ml-1 w-full rounded-md border border-transparent bg-transparent px-1 py-1 text-sm hover:border-line focus:border-ember focus:outline-none"
+                  value={task.recurrence || ''} onChange={(e) => update({ recurrence: e.target.value })}>
+                  <option value="">Does not repeat</option>
+                  <option value="daily">Daily</option>
+                  <option value="weekly">Weekly</option>
+                  <option value="biweekly">Every 2 weeks</option>
+                  <option value="monthly">Monthly</option>
+                </select>
+              </Field>
+            </div>
+
+            {/* dependencies */}
+            <section className="mt-4">
+              <p className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-fg/45"><Lock size={13} /> Dependency</p>
+              {blockers.length > 0 && <p className="mb-1 px-1 text-[10px] font-bold uppercase tracking-wider text-fg/40">Waiting on</p>}
+              {blockers.map((b: any) => (
+                <div key={b.id} className="group flex items-center gap-2 rounded-lg px-1 py-1 hover:bg-fg/5">
+                  {b.completed_at ? <CheckCircle2 size={15} className="text-emerald-600" /> : <Lock size={14} className="text-amber-600" />}
+                  <button type="button" onClick={() => openTask(b.id)} className={`min-w-0 flex-1 truncate text-left text-sm hover:text-ember ${b.completed_at ? 'text-fg/45 line-through' : 'font-medium'}`}>{b.title}</button>
+                  <button className="icon-btn opacity-0 group-hover:opacity-100 focus:opacity-100" onClick={() => update({ blocked_by: blockedBy.filter((x) => x !== b.id) })} aria-label="Remove dependency"><X size={13} /></button>
+                </div>
+              ))}
+              <select aria-label="Add a task this one is waiting on" className="input mt-1 py-1.5 text-sm" value=""
+                onChange={(e) => e.target.value && update({ blocked_by: [...blockedBy, e.target.value] })}>
+                <option value="">Set a task this one is waiting on…</option>
+                {siblings.filter((t) => !blockedBy.includes(t.id)).map((t) => <option key={t.id} value={t.id}>{t.title}</option>)}
+              </select>
+              {data.blocking.length > 0 && (
+                <>
+                  <p className="mb-1 mt-3 px-1 text-[10px] font-bold uppercase tracking-wider text-fg/40">Blocking</p>
+                  {data.blocking.map((b: any) => (
+                    <button key={b.id} type="button" onClick={() => openTask(b.id)} className={`block w-full truncate rounded-lg px-1 py-1 text-left text-sm hover:bg-fg/5 hover:text-ember ${b.completed_at ? 'text-fg/45 line-through' : 'font-medium'}`}>{b.title}</button>
+                  ))}
+                </>
+              )}
+            </section>
+          </fieldset>
+
+          {/* subtasks / attachments tabs */}
+          <div className="mt-5 border-b border-line">
+            <nav className="-mb-px flex gap-1">
+              {([['subtasks', 'Subtasks', data.subtasks.length], ['attachments', 'Attachments', data.files.length]] as const).map(([key, label, n]) => (
+                <button key={key} onClick={() => setTab(key)}
+                  className={`inline-flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm font-semibold ${tab === key ? 'border-ember text-fg' : 'border-transparent text-fg/50 hover:text-fg'}`}>
+                  {key === 'subtasks' ? <ListTodo size={14} /> : <Paperclip size={14} />} {label}
+                  {n > 0 && <span className="rounded bg-fg/10 px-1.5 text-[11px]">{key === 'subtasks' ? `${subDone}/${n}` : n}</span>}
+                </button>
+              ))}
+            </nav>
           </div>
 
-          <section>
-            <div className="mb-2 flex items-center justify-between">
-              <h3 className="text-sm font-bold">Subtasks {data.subtasks.length > 0 && <span className="font-medium text-fg/45">{subDone}/{data.subtasks.length}</span>}</h3>
-            </div>
-            <div className="space-y-0.5">
+          {tab === 'subtasks' ? (
+            <div className="pt-2">
               {data.subtasks.map((s: any) => (
-                <div key={s.id} className="group flex items-center gap-2 rounded-lg px-2 py-1 hover:bg-fg/5">
-                  <button onClick={() => act('task.update', { id: s.id, patch: { done: !s.completed_at } })} aria-label={s.completed_at ? 'Mark subtask open' : 'Mark subtask done'}>
+                <div key={s.id} className="group flex items-center gap-2 rounded-lg px-1 py-1 hover:bg-fg/5">
+                  <button disabled={!canEdit} onClick={() => act('task.update', { id: s.id, patch: { done: !s.completed_at } })} aria-label={s.completed_at ? 'Mark subtask open' : 'Mark subtask done'}>
                     {s.completed_at ? <CheckCircle2 size={17} className="text-emerald-600" /> : <Circle size={17} className="text-fg/30 hover:text-fg/60" />}
                   </button>
                   <span className={`flex-1 text-sm ${s.completed_at ? 'text-fg/40 line-through' : ''}`}>{s.title}</span>
-                  <button className="icon-btn opacity-0 group-hover:opacity-100 focus:opacity-100" onClick={() => act('task.delete', { id: s.id })} aria-label="Delete subtask"><X size={14} /></button>
+                  {canEdit && <button className="icon-btn opacity-0 group-hover:opacity-100 focus:opacity-100" onClick={() => act('task.delete', { id: s.id })} aria-label="Delete subtask"><X size={14} /></button>}
                 </div>
               ))}
+              {canEdit && (
+                <form onSubmit={addSub} className="mt-1 flex items-center gap-2 px-1">
+                  <Plus size={15} className="text-fg/35" />
+                  <input value={sub} onChange={(e) => setSub(e.target.value)} placeholder="Add a new subtask…" aria-label="New subtask"
+                    className="flex-1 bg-transparent py-1.5 text-sm placeholder:text-fg/40 focus:outline-none" />
+                </form>
+              )}
+              {!data.subtasks.length && !canEdit && <p className="px-1 py-3 text-sm text-fg/45">No subtasks.</p>}
             </div>
-            <form onSubmit={addSub} className="mt-1 flex items-center gap-2 px-2">
-              <Plus size={15} className="text-fg/35" />
-              <input value={sub} onChange={(e) => setSub(e.target.value)} placeholder="Add a subtask and press Enter" aria-label="New subtask" className="flex-1 bg-transparent py-1 text-sm placeholder:text-fg/35 focus:outline-none" />
-            </form>
-          </section>
-
-          <section>
-            <h3 className="mb-2 text-sm font-bold">Dependencies</h3>
-            {blockers.length > 0 && <p className="mb-1 px-2 text-[11px] font-bold uppercase tracking-wide text-fg/45">Blocked by</p>}
-            <div className="space-y-0.5">
-              {blockers.map((b: any) => (
-                <div key={b.id} className="group flex items-center gap-2 rounded-lg px-2 py-1 hover:bg-fg/5">
-                  {b.completed_at ? <CheckCircle2 size={16} className="text-emerald-600" /> : <Lock size={15} className="text-amber-600" />}
-                  <button type="button" onClick={() => openTask(b.id)} className={`min-w-0 flex-1 truncate text-left text-sm hover:text-ember ${b.completed_at ? 'text-fg/45 line-through' : 'font-medium'}`}>{b.title}</button>
-                  <button className="icon-btn opacity-0 group-hover:opacity-100 focus:opacity-100" onClick={() => update({ blocked_by: blockedBy.filter((x) => x !== b.id) })} aria-label="Remove dependency"><X size={14} /></button>
-                </div>
-              ))}
-            </div>
-            <select aria-label="Add a task this one is blocked by" className="input mt-1 py-1.5" value="" onChange={(e) => e.target.value && update({ blocked_by: [...blockedBy, e.target.value] })}>
-              <option value="">Add a task this one is waiting on…</option>
-              {siblings.filter((t) => !blockedBy.includes(t.id)).map((t) => (
-                <option key={t.id} value={t.id}>{t.title}</option>
-              ))}
-            </select>
-            {data.blocking.length > 0 && (
-              <>
-                <p className="mb-1 mt-3 px-2 text-[11px] font-bold uppercase tracking-wide text-fg/45">Blocking</p>
-                {data.blocking.map((b: any) => (
-                  <button key={b.id} type="button" onClick={() => openTask(b.id)} className={`block w-full truncate rounded-lg px-2 py-1 text-left text-sm hover:bg-fg/5 hover:text-ember ${b.completed_at ? 'text-fg/45 line-through' : 'font-medium'}`}>{b.title}</button>
-                ))}
-              </>
-            )}
-          </section>
-          </fieldset>
-
-          <section>
-            <div className="mb-2 flex items-center justify-between">
-              <h3 className="text-sm font-bold">Attachments</h3>
-              <div className="flex gap-1">
-                <button className="btn-ghost px-2 py-1 text-xs" onClick={addLink}><Link2 size={13} /> Add link</button>
-                <button className="btn-ghost px-2 py-1 text-xs" onClick={() => fileRef.current?.click()} disabled={uploading}>
-                  <Paperclip size={13} /> {uploading ? 'Uploading…' : 'Upload'}
-                </button>
-                <input ref={fileRef} type="file" multiple hidden onChange={(e) => onFiles(e.target.files)} />
+          ) : (
+            <div className="pt-3">
+              {canEdit && (
+                <label
+                  className="flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-dashed border-line px-4 py-6 text-sm text-fg/50 hover:border-ember hover:text-fg"
+                  onDragOver={(e) => e.preventDefault()}
+                  onDrop={(e) => { e.preventDefault(); onTaskFiles(e.dataTransfer.files); }}
+                >
+                  <Paperclip size={15} /> Drag &amp; drop or <span className="font-semibold text-ember underline">choose files</span>
+                  <input type="file" multiple hidden onChange={(e) => { onTaskFiles(e.target.files); e.target.value = ''; }} />
+                </label>
+              )}
+              <div className="mt-3">
+                <AttachmentList items={data.files} />
               </div>
-            </div>
-            {data.files.length === 0 ? (
-              <p className="px-2 text-sm text-fg/40">No attachments yet. Files up to 4 MB, or add a link.</p>
-            ) : (
-              <div className="space-y-1">
-                {data.files.map((f: any) => (
-                  <div key={f.id} className="group flex items-center gap-2 rounded-lg border border-line px-3 py-1.5 text-sm">
-                    {f.url ? <Link2 size={14} className="text-fg/40" /> : <Paperclip size={14} className="text-fg/40" />}
-                    <a href={f.url || `/api/files/${f.id}`} target="_blank" rel="noopener noreferrer" className="min-w-0 flex-1 truncate font-medium hover:text-ember">{f.name}</a>
-                    {!f.url && <span className="text-xs text-fg/40">{fmtSize(f.size)}</span>}
-                    {canEdit && <button className="icon-btn opacity-0 group-hover:opacity-100 focus:opacity-100" onClick={() => confirmDelete(`"${f.name}"`) && act('file.delete', { id: f.id })} aria-label="Delete attachment"><X size={14} /></button>}
-                  </div>
-                ))}
-              </div>
-            )}
-          </section>
-
-          <section>
-            <h3 className="mb-2 text-sm font-bold">Comments</h3>
-            <div className="space-y-3">
-              {data.comments.map((c: any) => {
-                const u = users.find((x) => x.id === c.user_id);
-                return (
-                  <div key={c.id} className="group flex gap-2.5">
-                    <Avatar user={u} size={28} />
-                    <div className="min-w-0 flex-1">
-                      <p className="text-xs text-fg/45">
-                        <span className="font-bold text-fg">{u?.name || 'Former member'}</span> · {fmtDateTime(c.created_at)}
-                        {(c.user_id === me.id || isAdmin) && (
-                          <button className="ml-2 opacity-0 hover:text-red-600 group-hover:opacity-100 focus:opacity-100" onClick={() => act('comment.delete', { id: c.id })}>Delete</button>
-                        )}
-                      </p>
-                      <RichText text={c.body} className="text-sm leading-relaxed" />
+              {data.files.length > 0 && canEdit && (
+                <div className="mt-2 space-y-1">
+                  {data.files.map((f: any) => (
+                    <div key={f.id} className="group flex items-center gap-2 rounded-lg px-2 py-1 text-xs text-fg/50">
+                      <span className="min-w-0 flex-1 truncate">{f.name}{!f.url && ` · ${fmtSize(f.size)}`}</span>
+                      <button className="icon-btn opacity-0 group-hover:opacity-100 focus:opacity-100" onClick={() => confirmDelete(`"${f.name}"`) && act('file.delete', { id: f.id })} aria-label={`Delete ${f.name}`}><X size={13} /></button>
                     </div>
-                  </div>
-                );
-              })}
+                  ))}
+                </div>
+              )}
+              {!data.files.length && !canEdit && <p className="px-1 py-3 text-sm text-fg/45">No attachments.</p>}
             </div>
-            <div className="mt-3 flex gap-2.5">
-              <Avatar user={me} size={28} />
-              <MentionInput value={comment} onChange={setComment} onSubmit={addComment} people={mentionable} label="New comment"
-                placeholder="Write a comment. Type @ to mention someone. Enter to send." className="min-h-[60px]" />
-            </div>
-          </section>
+          )}
         </div>
 
-        {/* side column */}
-        <aside className="border-t border-line bg-paper/60 p-5 md:rounded-br-2xl md:border-l md:border-t-0">
-          <fieldset disabled={!canEdit} className="m-0 min-w-0 space-y-4 border-0 p-0">
-          <div>
-            <label className="label" htmlFor="t-status">List</label>
-            <select id="t-status" className="input" value={task.status_id || ''} onChange={(e) => update({ status_id: e.target.value })}>
-              {pdata.statuses.map((s: any) => (
-                <option key={s.id} value={s.id}>{s.name}</option>
-              ))}
-            </select>
+        {/* ───── right: comments and activity ───── */}
+        <aside className="flex min-h-0 flex-col border-t border-line bg-paper/50 lg:border-l lg:border-t-0">
+          <div className="flex items-center gap-2 border-b border-line px-4 py-2.5">
+            <MessageSquare size={15} className="text-fg/45" />
+            <h3 className="text-sm font-bold">{data.comments.length} {data.comments.length === 1 ? 'Comment' : 'Comments'}</h3>
+            <button className="btn-outline ml-auto px-2 py-1 text-xs" onClick={() => setShowActivity((v) => !v)}>
+              <ActivityIcon size={13} /> {showActivity ? 'Hide activity' : 'Show activity'}
+            </button>
           </div>
 
-          <div>
-            <span className="label">Assignees</span>
-            <div className="flex flex-wrap items-center gap-1.5">
-              {assignees.map((uid) => {
-                const u = users.find((x) => x.id === uid);
+          <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-3">
+            {!feed.length && <p className="py-8 text-center text-sm text-fg/45">No comments yet.</p>}
+            {feed.map((item) => {
+              if (item.kind === 'activity') {
+                const u = users.find((x) => x.id === item.data.user_id);
                 return (
-                  <span key={uid} className="chip bg-surface py-1 pl-1 pr-2 ring-1 ring-line">
-                    <Avatar user={u} size={18} /> {u?.name.split(' ')[0] || 'Unknown'}
-                    <button onClick={() => update({ assignees: assignees.filter((x) => x !== uid) })} aria-label={`Remove ${u?.name}`}><X size={11} /></button>
-                  </span>
-                );
-              })}
-              <Menu align="left" trigger={<button className="icon-btn border border-dashed border-fg/25" aria-label="Add assignee"><Plus size={14} /></button>}>
-                {() => (
-                  <div className="max-h-64 overflow-y-auto">
-                    {activeUsers.map((u) => {
-                      const on = assignees.includes(u.id);
-                      return (
-                        <button key={u.id} onClick={() => update({ assignees: on ? assignees.filter((x) => x !== u.id) : [...assignees, u.id] })}
-                          className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm hover:bg-fg/5">
-                          <Avatar user={u} size={22} /> <span className="flex-1 truncate">{u.name}</span> {on && <Check size={14} className="text-ember" />}
-                        </button>
-                      );
-                    })}
+                  <div key={`a${item.data.id}`} className="flex items-center gap-2 text-xs text-fg/45">
+                    <Avatar user={u} size={18} ring={false} />
+                    <span className="min-w-0 flex-1 truncate"><span className="font-semibold text-fg/65">{u?.name.split(' ')[0] || 'Someone'}</span> {item.data.text}</span>
+                    <span className="shrink-0">{fmtDateTime(item.at)}</span>
                   </div>
-                )}
-              </Menu>
+                );
+              }
+              if (item.kind === 'time') {
+                const u = users.find((x) => x.id === item.data.user_id);
+                return (
+                  <div key={`e${item.data.id}`} className="flex items-center gap-2 text-xs text-fg/45">
+                    <Avatar user={u} size={18} ring={false} />
+                    <span className="min-w-0 flex-1 truncate"><span className="font-semibold text-fg/65">{u?.name.split(' ')[0] || 'Someone'}</span> logged {fmtDur(item.data.seconds)} on this task</span>
+                    <span className="shrink-0">{fmtDateTime(item.at)}</span>
+                  </div>
+                );
+              }
+              const c = item.data;
+              const u = users.find((x) => x.id === c.user_id);
+              const mine = c.user_id === me.id;
+              return (
+                <div key={c.id} className="group flex gap-2.5">
+                  <Avatar user={u} size={28} />
+                  <div className="min-w-0 flex-1">
+                    <p className="flex items-center gap-1.5 text-xs text-fg/45">
+                      <span className="font-bold text-fg">{u?.name || 'Former member'}</span>
+                      <span>{fmtDateTime(c.created_at)}</span>
+                      {c.edited_at && <span className="italic">edited</span>}
+                      {(mine || isAdmin) && (
+                        <span className="ml-auto flex gap-0.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100">
+                          {mine && (
+                            <button className="icon-btn h-6 w-6" onClick={() => { setEditing(c.id); setDraft(c.body); }} aria-label="Edit comment"><Pencil size={12} /></button>
+                          )}
+                          <button className="icon-btn h-6 w-6 hover:text-red-600" onClick={() => confirmDelete('this comment') && act('comment.delete', { id: c.id })} aria-label="Delete comment"><Trash2 size={12} /></button>
+                        </span>
+                      )}
+                    </p>
+                    {editing === c.id ? (
+                      <div className="mt-1">
+                        <textarea className="input min-h-[60px] text-sm" value={draft} autoFocus onChange={(e) => setDraft(e.target.value)}
+                          onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); saveEdit(c.id); } if (e.key === 'Escape') { e.stopPropagation(); setEditing(null); } }} />
+                        <div className="mt-1 flex gap-1.5">
+                          <button className="btn-primary px-2 py-1 text-xs" onClick={() => saveEdit(c.id)}>Save</button>
+                          <button className="btn-ghost px-2 py-1 text-xs" onClick={() => setEditing(null)}>Cancel</button>
+                        </div>
+                      </div>
+                    ) : (
+                      <>
+                        {c.body && <RichText text={c.body} className="text-sm leading-relaxed" />}
+                        <AttachmentList items={c.attachments || []} compact />
+                      </>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="border-t border-line bg-surface px-3 py-2.5">
+            <PendingAttachments a={attach} />
+            <div className="flex items-end gap-1.5">
+              <Avatar user={me} size={26} />
+              <MentionInput
+                value={comment} onChange={setComment} onSubmit={addComment}
+                people={people.mentionable} others={people.others} onPickOther={people.addToProject}
+                onPaste={attach.onPaste}
+                label="New comment" placeholder="Post a comment… @ to mention, paste a screenshot to attach."
+                className="min-h-[46px] resize-none text-sm" rows={2}
+              />
+              <AttachButton a={attach} label="Attach files to this comment" />
+              <button className="btn-primary h-[38px]" onClick={addComment} disabled={!comment.trim() && !attach.ids.length} aria-label="Post comment"><Send size={15} /></button>
             </div>
           </div>
-
-          <div className="grid grid-cols-2 gap-2">
-            <div>
-              <label className="label" htmlFor="t-start">Start</label>
-              <input id="t-start" type="date" className="input px-1.5 text-[13px]" value={task.start_date || ''} onChange={(e) => update({ start_date: e.target.value })} />
-            </div>
-            <div>
-              <label className="label" htmlFor="t-due">Due</label>
-              <input id="t-due" type="date" className="input px-1.5 text-[13px]" value={task.due_date || ''} onChange={(e) => update({ due_date: e.target.value })} />
-            </div>
-          </div>
-
-          <div>
-            <label className="label" htmlFor="t-rec">Repeat</label>
-            <select id="t-rec" className="input" value={task.recurrence || ''} onChange={(e) => update({ recurrence: e.target.value })}>
-              <option value="">Does not repeat</option>
-              <option value="daily">Daily</option>
-              <option value="weekly">Weekly</option>
-              <option value="biweekly">Every 2 weeks</option>
-              <option value="monthly">Monthly</option>
-            </select>
-            {task.recurrence && <p className="mt-1 text-xs text-fg/50">When you complete this task, the next one is created with the following due date.</p>}
-          </div>
-
-          <div>
-            <label className="label" htmlFor="t-pri">Priority</label>
-            <select id="t-pri" className="input" value={task.priority} onChange={(e) => update({ priority: e.target.value })}>
-              {Object.entries(PRIORITIES).map(([k, v]) => (
-                <option key={k} value={k}>{v.label}</option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label className="label" htmlFor="t-ms">Milestone</label>
-            <select id="t-ms" className="input" value={task.milestone_id || ''} onChange={(e) => update({ milestone_id: e.target.value })}>
-              <option value="">No milestone</option>
-              {pdata.milestones.map((m: any) => (
-                <option key={m.id} value={m.id}>{m.name}</option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <span className="label">Tags</span>
-            <div className="flex flex-wrap gap-1">
-              {tags.map((t) => (
-                <span key={t} className="chip bg-fg/10 text-fg/70">
-                  {t}
-                  <button onClick={() => update({ tags: tags.filter((x) => x !== t) })} aria-label={`Remove tag ${t}`}><X size={11} /></button>
-                </span>
-              ))}
-            </div>
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                const v = tag.trim();
-                if (v && !tags.includes(v)) update({ tags: [...tags, v] });
-                setTag('');
-              }}
-            >
-              <input value={tag} onChange={(e) => setTag(e.target.value)} placeholder="Add a tag and press Enter" aria-label="New tag" className="input mt-1.5 py-1.5" />
-            </form>
-          </div>
-
-          <div>
-            <span className="label">Time tracked</span>
-            <div className="flex items-center justify-between rounded-lg border border-line bg-surface px-3 py-2">
-              <span className="flex items-center gap-1.5 text-sm font-bold tabular-nums"><Clock size={14} className="text-fg/40" /> {fmtDur(data.seconds)}</span>
-              {running ? (
-                <button className="btn bg-ember px-2 py-1 text-xs text-white" onClick={() => act('time.stop')}><Square size={11} fill="currentColor" /> Stop</button>
-              ) : (
-                <button className="btn-dark px-2 py-1 text-xs" onClick={() => act('time.start', { taskId: id })}><Play size={11} fill="currentColor" /> Start</button>
-              )}
-            </div>
-          </div>
-          </fieldset>
         </aside>
       </div>
     </Modal>

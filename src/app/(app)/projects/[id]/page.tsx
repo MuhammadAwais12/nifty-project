@@ -1,10 +1,12 @@
 'use client';
 import { Suspense, useState } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
-import { Archive, Clock, FileText, Flag, FolderOpen, Home, ListTodo, MessageSquare, MoreHorizontal, Settings, Trash2, UserPlus } from 'lucide-react';
+import { Archive, Clock, FileText, Flag, FolderOpen, Home, ListTodo, MessageSquare, MessagesSquare, MoreHorizontal, Settings, Trash2, UserPlus, Users } from 'lucide-react';
 import { act, useQ } from '@/lib/api';
 import { AvatarStack, Menu, MenuItem, Spinner, useApp } from '@/components/ui';
 import { MembersModal } from '@/components/MembersModal';
+import { InviteModal } from '@/components/InviteModal';
+import Link from 'next/link';
 import { ProjectForm } from '@/components/ProjectForm';
 import { ProjectHome } from '@/components/ProjectHome';
 import { Tasks } from '@/components/Tasks';
@@ -32,6 +34,7 @@ function Project() {
   const tabs = TABS.filter((t) => canEdit || t.id !== 'time');
   const tab = tabs.some((t) => t.id === params.get('tab')) ? params.get('tab')! : 'home';
   const [membersOpen, setMembersOpen] = useState(false);
+  const [inviting, setInviting] = useState<null | 'guest' | 'member'>(null);
   const { data, error } = useQ('project.get', { id }, { refreshInterval: 20000 });
   const [settings, setSettings] = useState(false);
   const goTo = (t: string) => router.replace(`/projects/${id}?tab=${t}`, { scroll: false });
@@ -66,6 +69,8 @@ function Project() {
           <Menu trigger={<button className="icon-btn" aria-label="Project options"><MoreHorizontal size={18} /></button>}>
             {(close) => (
               <>
+                <MenuItem onClick={() => { close(); setMembersOpen(true); }}><Users size={15} /> Manage members</MenuItem>
+                <MenuItem onClick={() => { close(); setInviting('guest'); }}><UserPlus size={15} /> Invite a client as guest</MenuItem>
                 <MenuItem onClick={() => { close(); setSettings(true); }}><Settings size={15} /> Project settings</MenuItem>
                 <MenuItem onClick={() => { close(); act('project.update', { id, archived: !p.archived }); }}><Archive size={15} /> {p.archived ? 'Restore project' : 'Archive project'}</MenuItem>
                 {canManage && (
@@ -78,13 +83,16 @@ function Project() {
           </Menu>
           </span>
         </div>
-        <nav className="-mb-px mt-3 flex gap-1 overflow-x-auto" aria-label="Project sections">
+        <nav className="-mb-px mt-3 flex items-center gap-1 overflow-x-auto" aria-label="Project sections">
           {tabs.map((t) => (
             <button key={t.id} onClick={() => goTo(t.id)} aria-current={tab === t.id ? 'page' : undefined}
               className={`inline-flex shrink-0 items-center gap-1.5 border-b-2 px-3 py-2 text-sm font-semibold ${tab === t.id ? 'border-ember text-fg' : 'border-transparent text-fg/50 hover:text-fg'}`}>
               <t.icon size={15} /> {t.label}
             </button>
           ))}
+          <Link href={`/chat?p=${id}`} className="ml-auto inline-flex shrink-0 items-center gap-1.5 border-b-2 border-transparent px-3 py-2 text-sm font-semibold text-fg/50 hover:text-fg" title="Open this project's chat channel">
+            <MessagesSquare size={15} /> <span className="hidden sm:inline">Chat</span>
+          </Link>
         </nav>
       </header>
       <div className="min-h-0 flex-1">
@@ -97,7 +105,11 @@ function Project() {
         {tab === 'time' && <TimeTab data={data} />}
       </div>
       {settings && <ProjectForm project={p} onClose={() => setSettings(false)} />}
-      {membersOpen && <MembersModal projectId={id} members={data.members} onClose={() => setMembersOpen(false)} />}
+      {membersOpen && <MembersModal projectId={id} members={data.members} onClose={() => setMembersOpen(false)} onInvite={() => { setMembersOpen(false); setInviting('member'); }} />}
+      {inviting && (
+        <InviteModal onClose={() => setInviting(null)} defaultRole={inviting} lockProject={id}
+          title={inviting === 'guest' ? `Invite a client to ${p.name}` : `Invite someone to ${p.name}`} />
+      )}
     </div>
   );
 }
