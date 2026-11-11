@@ -23,7 +23,7 @@ Task dependencies with a Blocked badge, cycle refusal and unblocked notification
 
 Not done here: deploying to Vercel, and a sign-in against real Google credentials — both need accounts only you can create.
 
-## v4 — the task screen, images and threads — current
+## v4 — the task screen, images and threads
 - **Task references.** Every project gets a short key (`VIS`, `PHA`) and every task a number within it, shown on cards, in the list and in the task header.
 - **Rebuilt task screen**, following the Nifty layout: a header with the reference, the list it sits in, a live timer and the complete action; a field grid for assignees, tags, milestone, dates, priority and repeat; Subtasks and Attachments as tabs; and a comments-and-activity panel down the right-hand side.
 - **Images and files on comments, discussion messages and project chat.** Attach them, or paste a screenshot straight into the box. They render inline and open full size in a viewer with arrow-key navigation.
@@ -37,4 +37,17 @@ Not done here: deploying to Vercel, and a sign-in against real Google credential
 - The v3 suite re-run in full (55 assertions) with no regressions.
 - Upgrade pass against a v3 database: existing projects were given keys, existing tasks were numbered, and everything else read back unchanged.
 - Browser walkthrough in both themes, desktop and mobile: the new task screen, the image viewer, threaded discussions with images, the mention picker, the project menu, Team and Chat — no console or page errors.
+- Clean type check and production build.
+
+## v5 — the task page, notifications, and a trim — current
+- **Tasks open as their own page** at `/tasks/<id>` instead of a dialog, with a back button, the project breadcrumb and the task's reference in the header. The comments-and-activity panel now runs the full height of the window.
+- **Copy link.** A button in the task header, and an entry in its menu, puts a permanent link to the task on the clipboard. Opening that link cold loads straight into the task.
+- **Desktop notifications.** A person turns them on from the bell panel or from *Your profile*; their browser asks once. After that, mentions, replies, comments on their tasks, assignments, project invitations and direct messages raise a notification that opens the right screen when clicked. While a tab is open the app raises them itself; with `VAPID_PUBLIC_KEY` and `VAPID_PRIVATE_KEY` set, a service worker and Web Push deliver them with the tab closed. Subscriptions are stored per device and dropped automatically when a browser discards one.
+- **Direct messages reach the bell too**, with a preview of the message and a link to the conversation.
+- **Dependencies and repeating tasks removed**, from the task screen, the cards, the list, the timeline and the server. The two columns stay in the schema so databases from earlier versions still load.
+
+### Testing done for v5
+- 51-assertion API pass on a clean database, covering the earlier v4 ground plus: the server ignoring dependency and repeat fields sent by hand, completing a task no longer spawning a copy, push configuration, registering and removing devices, per-person device counts, refusal of unusable subscriptions, direct-message notifications with their preview and link, and task notifications linking to the new task page.
+- The role suite re-run in full (55 assertions) with no regressions, and an upgrade pass against a v4 database.
+- Browser pass confirming the task opens at its own URL, that Dependency and Repeat are gone, that a copied link loads cold, that back behaves, that the bell shows the permission prompt, and that granting permission flips the profile setting to on — in both themes, desktop and mobile, with no console errors.
 - Clean type check and production build.

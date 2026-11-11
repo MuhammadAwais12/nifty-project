@@ -131,6 +131,8 @@ create table if not exists activity (
 );
 create index if not exists activity_project_idx on activity(project_id, created_at);
 
+-- kept so databases created by earlier versions still load; the app no longer
+-- reads or writes either column (dependencies and repeating tasks were removed)
 alter table tasks add column if not exists recurrence text not null default '';
 alter table tasks add column if not exists blocked_by jsonb not null default '[]';
 
@@ -246,4 +248,17 @@ update tasks t set number = n.seq from (
 ) n where t.id = n.id and t.number is null
   and not exists (select 1 from settings where key = 'task_numbers_migrated');
 insert into settings (key, value) values ('task_numbers_migrated', '1') on conflict (key) do nothing;
+
+/* ── v5: desktop and push notifications ── */
+create table if not exists push_subscriptions (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references users(id) on delete cascade,
+  endpoint text not null unique,
+  p256dh text not null,
+  auth text not null,
+  user_agent text not null default '',
+  created_at timestamptz not null default now()
+);
+create index if not exists push_user_idx on push_subscriptions(user_id);
+alter table notifications add column if not exists link text;
 `;

@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { CalendarDays, ChevronLeft, ChevronRight, CheckCircle2, Circle, Columns3, GanttChart, List, Lock, MessageSquare, MoreHorizontal, Paperclip, Plus, Repeat, Rows3, Search, ListChecks } from 'lucide-react';
+import { CalendarDays, ChevronLeft, ChevronRight, CheckCircle2, Circle, Columns3, GanttChart, List, MessageSquare, MoreHorizontal, Paperclip, Plus, Rows3, Search, ListChecks } from 'lucide-react';
 import { act } from '@/lib/api';
 import { Avatar, AvatarStack, Menu, MenuItem, PriorityFlag, addDays, daysBetween, fmtDate, isOverdue, parseYmd, today, useApp, ymd } from './ui';
 
@@ -105,7 +105,7 @@ function AddTask({ projectId, statusId, milestoneId, dueDate, compact }: { proje
 }
 
 /* ───────────── board (kanban) ───────────── */
-function Card({ t, milestoneName, onOpen, blocked, taskKey }: { t: any; milestoneName: (id: string) => any; onOpen: () => void; blocked?: boolean; taskKey?: string }) {
+function Card({ t, milestoneName, onOpen, taskKey }: { t: any; milestoneName: (id: string) => any; onOpen: () => void; taskKey?: string }) {
   const m = t.milestone_id && milestoneName(t.milestone_id);
   const ref = taskKey && t.number ? `${taskKey}-${t.number}` : '';
   return (
@@ -121,10 +121,8 @@ function Card({ t, milestoneName, onOpen, blocked, taskKey }: { t: any; mileston
       )}
       <p className={`text-sm font-semibold leading-snug ${t.completed_at ? 'text-fg/50 line-through' : ''}`}>{t.title}</p>
       <div className="mt-2 flex items-center gap-2.5 text-xs text-fg/50">
-        {blocked && <span className="chip bg-amber-100 px-1.5 text-amber-800" title="Waiting on another task"><Lock size={10} /> Blocked</span>}
         <PriorityFlag priority={t.priority} />
         {t.due_date && <span className={`font-semibold ${isOverdue(t) ? 'text-red-600' : ''}`}>{fmtDate(t.due_date)}</span>}
-        {t.recurrence && <span title={`Repeats ${t.recurrence}`} className="inline-flex"><Repeat size={12} /></span>}
         {t.sub_total > 0 && <span className="inline-flex items-center gap-0.5"><ListChecks size={12} /> {t.sub_done}/{t.sub_total}</span>}
         {t.comment_count > 0 && <span className="inline-flex items-center gap-0.5"><MessageSquare size={12} /> {t.comment_count}</span>}
         {t.file_count > 0 && <span className="inline-flex items-center gap-0.5"><Paperclip size={12} /> {t.file_count}</span>}
@@ -134,7 +132,7 @@ function Card({ t, milestoneName, onOpen, blocked, taskKey }: { t: any; mileston
   );
 }
 
-function Board({ data, projectId, visible, tasks, setTasks, openTask, milestoneName, milestone, isBlocked, canEdit, taskKey }: any) {
+function Board({ data, projectId, visible, tasks, setTasks, openTask, milestoneName, milestone, canEdit, taskKey }: any) {
   const [dragId, setDragId] = useState<string | null>(null);
   const [over, setOver] = useState<{ statusId: string; index: number } | null>(null);
   const [adding, setAdding] = useState(false);
@@ -218,7 +216,7 @@ function Board({ data, projectId, visible, tasks, setTasks, openTask, milestoneN
                       }}
                       className={dragId === t.id ? 'opacity-40' : ''}
                     >
-                      <Card t={t} milestoneName={milestoneName} onOpen={() => openTask(t.id)} blocked={isBlocked(t)} taskKey={taskKey} />
+                      <Card t={t} milestoneName={milestoneName} onOpen={() => openTask(t.id)} taskKey={taskKey} />
                     </div>
                   </div>
                 );
@@ -247,7 +245,7 @@ function Board({ data, projectId, visible, tasks, setTasks, openTask, milestoneN
 }
 
 /* ───────────── list ───────────── */
-function ListView({ data, projectId, visible, openTask, milestoneName, milestone, isBlocked, canEdit, taskKey }: any) {
+function ListView({ data, projectId, visible, openTask, milestoneName, milestone, canEdit, taskKey }: any) {
   return (
     <div className="h-full space-y-5 overflow-y-auto px-4 pb-6 sm:px-6">
       {data.statuses.map((s: any) => {
@@ -267,8 +265,6 @@ function ListView({ data, projectId, visible, openTask, milestoneName, milestone
                     </button>
                     {taskKey && t.number && <span className="hidden shrink-0 font-mono text-[10px] font-bold text-fg/35 sm:inline">{taskKey}-{t.number}</span>}
                     <button onClick={() => openTask(t.id)} className={`min-w-0 flex-1 truncate text-left text-sm font-semibold ${t.completed_at ? 'text-fg/45 line-through' : ''}`}>{t.title}</button>
-                    {isBlocked(t) && <span className="chip bg-amber-100 text-amber-800"><Lock size={10} /> Blocked</span>}
-                    {t.recurrence && <span title={`Repeats ${t.recurrence}`} className="inline-flex text-fg/45"><Repeat size={13} /></span>}
                     {m && <span className="chip hidden text-white sm:inline-flex" style={{ background: m.color }}>{m.name}</span>}
                     {t.sub_total > 0 && <span className="hidden items-center gap-0.5 text-xs text-fg/50 sm:inline-flex"><ListChecks size={12} /> {t.sub_done}/{t.sub_total}</span>}
                     <PriorityFlag priority={t.priority} />
@@ -347,7 +343,7 @@ function CalendarView({ projectId, visible, openTask, canEdit }: any) {
 }
 
 /* ───────────── timeline (Gantt) ───────────── */
-function Timeline({ data, visible, openTask, isBlocked }: any) {
+function Timeline({ data, visible, openTask }: any) {
   const scroller = useRef<HTMLDivElement>(null);
   const hasRows = visible.some((t: any) => t.start_date || t.due_date);
   // open the chart around today instead of at the oldest task
@@ -384,20 +380,6 @@ function Timeline({ data, visible, openTask, isBlocked }: any) {
     else months.push({ label, span: 1 });
   }
   const x = (d: string) => daysBetween(start, d) * DAY;
-  const index = new Map<string, number>(rows.map((r: any, i: number) => [r.t.id, i]));
-  const links: string[] = [];
-  rows.forEach((r: any, i: number) => {
-    for (const id of r.t.blocked_by || []) {
-      const j = index.get(id);
-      if (j === undefined) continue;
-      const from = rows[j];
-      const x1 = x(from.e) + DAY;
-      const y1 = j * ROW + ROW / 2;
-      const x2 = x(r.s);
-      const y2 = i * ROW + ROW / 2;
-      links.push(x2 >= x1 + 12 ? `M${x1} ${y1} H${x1 + 6} V${y2} H${x2 - 2}` : `M${x1} ${y1} H${x1 + 6} V${y2 - ROW / 2 + 2} H${x2 - 10} V${y2} H${x2 - 2}`);
-    }
-  });
   const statusName = (id: string) => data.statuses.find((s: any) => s.id === id)?.name;
   const todayX = x(today()) + DAY / 2;
 
@@ -428,21 +410,14 @@ function Timeline({ data, visible, openTask, isBlocked }: any) {
             <div className="pointer-events-none absolute inset-y-0" style={{ left: LABEL, width: total * DAY }}>
               {days.map((d, i) => (d.getDay() === 0 || d.getDay() === 6) && <div key={i} className="absolute inset-y-0 bg-fg/[.03]" style={{ left: i * DAY, width: DAY }} />)}
               <div data-today className="absolute inset-y-0 w-px bg-ember" style={{ left: todayX }} />
-              <svg className="absolute inset-0 h-full w-full" aria-hidden="true">
-                <defs>
-                  <marker id="tl-arrow" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0 0 L7 3.5 L0 7 z" fill="#8b8fa8" /></marker>
-                </defs>
-                {links.map((d, i) => <path key={i} d={d} fill="none" stroke="#8b8fa8" strokeWidth="1.5" markerEnd="url(#tl-arrow)" />)}
-              </svg>
             </div>
             {rows.map((r: any, i: number) => {
               const t = r.t;
-              const color = t.completed_at ? '#12b886' : isOverdue(t) ? '#e03131' : isBlocked(t) ? '#f59f00' : data.project.color;
+              const color = t.completed_at ? '#12b886' : isOverdue(t) ? '#e03131' : data.project.color;
               return (
                 <div key={t.id} className="absolute inset-x-0 flex border-b border-line/60" style={{ top: i * ROW, height: ROW }}>
                   <button onClick={() => openTask(t.id)} style={{ width: LABEL }} title={t.title}
                     className="sticky left-0 z-10 flex shrink-0 items-center gap-1.5 border-r border-line bg-surface px-3 text-left text-sm font-semibold hover:text-ember">
-                    {isBlocked(t) && <Lock size={12} className="shrink-0 text-amber-600" />}
                     <span className={`truncate ${t.completed_at ? 'text-fg/45 line-through' : ''}`}>{t.title}</span>
                   </button>
                   <button onClick={() => openTask(t.id)} title={`${t.title} · ${fmtDate(r.s)} to ${fmtDate(r.e)} · ${statusName(t.status_id) || ''}`}
@@ -457,7 +432,7 @@ function Timeline({ data, visible, openTask, isBlocked }: any) {
         </div>
       </div>
       <p className="mt-2 text-xs text-fg/50">
-        Bars run from start date to due date; arrows show dependencies.
+        Bars run from each task's start date to its due date.
         {unscheduled > 0 && ` ${unscheduled} ${unscheduled === 1 ? 'task has' : 'tasks have'} no dates and ${unscheduled === 1 ? 'is' : 'are'} not shown.`}
       </p>
     </div>
@@ -465,7 +440,7 @@ function Timeline({ data, visible, openTask, isBlocked }: any) {
 }
 
 /* ───────────── swimlanes ───────────── */
-function Swimlanes({ data, visible, tasks, setTasks, openTask, milestoneName, isBlocked, canEdit, taskKey }: any) {
+function Swimlanes({ data, visible, tasks, setTasks, openTask, milestoneName, canEdit, taskKey }: any) {
   const { users } = useApp();
   const [by, setBy] = useState<'assignee' | 'milestone'>('assignee');
   const [drag, setDrag] = useState<{ id: string; lane: string } | null>(null);
@@ -542,7 +517,7 @@ function Swimlanes({ data, visible, tasks, setTasks, openTask, milestoneName, is
                       <div key={t.id} draggable={canEdit} className={drag?.id === t.id ? 'opacity-40' : ''}
                         onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', t.id); setDrag({ id: t.id, lane: lane.id }); }}
                         onDragEnd={() => { setDrag(null); setOver(''); }}>
-                        <Card t={t} milestoneName={milestoneName} onOpen={() => openTask(t.id)} blocked={isBlocked(t)} taskKey={taskKey} />
+                        <Card t={t} milestoneName={milestoneName} onOpen={() => openTask(t.id)} taskKey={taskKey} />
                       </div>
                     ))}
                   </div>

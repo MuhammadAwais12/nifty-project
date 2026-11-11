@@ -74,6 +74,10 @@ export const PERMS: Record<string, Role[] | null> = {
   'notif.list': [...ROLES],
   'notif.read': [...ROLES],
   'profile.update': [...ROLES],
+  'push.config': [...ROLES],
+  'push.subscribe': [...ROLES],
+  'push.unsubscribe': [...ROLES],
+  'push.test': [...ROLES],
 
   // members and up: the people who do the work
   'project.update': ['owner', 'admin', 'manager', 'member'],

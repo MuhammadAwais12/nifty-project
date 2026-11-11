@@ -4,11 +4,11 @@ import type { User } from './auth';
 import { atLeast, seesEverything, CAN_GRANT, ROLES, type Role } from './roles';
 import { COLORS, pickColor, newToken, setting, roleForNewAccount, acceptInvite, inviteByToken } from './account';
 import { seedWelcomeProject } from './seed';
+import { publicKey, pushEnabled, sendPush } from './push';
 
 type Ctx = { user: User; session?: string | null };
 type Handler = (p: any, ctx: Ctx) => Promise<any>;
 
-const RECURRENCES = ['', 'daily', 'weekly', 'biweekly', 'monthly'];
 const text = (v: any, max = 5000) => String(v ?? '').trim().slice(0, max);
 const need = (v: any, label: string) => {
   const s = text(v);
@@ -28,23 +28,6 @@ async function manages(user: User, projectId: string) {
 }
 const dateOrNull = (v: any) => (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null);
 const uniq = (list: any[]) => Array.from(new Set<string>((list || []).filter(Boolean).map(String)));
-const todayStr = () => new Date().toISOString().slice(0, 10);
-
-function shiftDate(ymd: string, recurrence: string): string {
-  const d = new Date(`${ymd}T00:00:00Z`);
-  if (recurrence === 'daily') d.setUTCDate(d.getUTCDate() + 1);
-  else if (recurrence === 'weekly') d.setUTCDate(d.getUTCDate() + 7);
-  else if (recurrence === 'biweekly') d.setUTCDate(d.getUTCDate() + 14);
-  else {
-    // same day next month, clamped to that month's last day (Jan 31 -> Feb 28)
-    const day = d.getUTCDate();
-    d.setUTCDate(1);
-    d.setUTCMonth(d.getUTCMonth() + 1);
-    const last = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0)).getUTCDate();
-    d.setUTCDate(Math.min(day, last));
-  }
-  return d.toISOString().slice(0, 10);
-}
 
 /* ───────────── access control ───────────── */
 export async function canAccess(user: User, projectId: string): Promise<boolean> {
@@ -92,12 +75,20 @@ async function attach(fileIds: any, projectId: string, userId: string, column: '
       and comment_id is null and message_id is null and task_id is null`;
 }
 
-async function notify(userIds: string[], actor: User, n: { projectId?: string | null; taskId?: string | null; kind: string; text: string }) {
+async function notify(
+  userIds: string[],
+  actor: User,
+  n: { projectId?: string | null; taskId?: string | null; kind: string; text: string; link?: string }
+) {
   const sql = db();
+  const link = n.link || (n.taskId ? `/tasks/${n.taskId}` : n.projectId ? `/projects/${n.projectId}` : '/');
   for (const uid of uniq(userIds)) {
     if (uid === actor.id) continue;
-    await sql`insert into notifications (user_id, actor_id, project_id, task_id, kind, text)
-      select u.id, ${actor.id}, ${n.projectId || null}, ${n.taskId || null}, ${n.kind}, ${n.text} from users u where u.id = ${uid} and u.active`;
+    const made = await sql`insert into notifications (user_id, actor_id, project_id, task_id, kind, text, link)
+      select u.id, ${actor.id}, ${n.projectId || null}, ${n.taskId || null}, ${n.kind}, ${n.text}, ${link}
+      from users u where u.id = ${uid} and u.active returning id`;
+    // a desktop notification, for anyone who has turned them on
+    if (made.length) await sendPush(uid, { title: actor.name, body: n.text, url: link, tag: n.kind });
   }
 }
 
@@ -109,33 +100,6 @@ async function mentioned(body: string, projectId: string): Promise<string[]> {
       and (u.role in ('owner', 'admin') or exists (select 1 from project_members m where m.project_id = ${projectId} and m.user_id = u.id))`;
   return rows.map((r: any) => r.id);
 }
-
-/** Runs when a task goes from open to complete: unblock dependents and spawn the next recurring copy. */
-async function afterComplete(task: any, user: User) {
-  const sql = db();
-  const waiting = await sql`select * from tasks where project_id = ${task.project_id} and completed_at is null and jsonb_exists(blocked_by, ${task.id})`;
-  for (const w of waiting) {
-    const [{ n }] = await sql`select count(*)::int as n from tasks b where jsonb_exists(${sql.json(w.blocked_by)}::jsonb, b.id::text) and b.completed_at is null`;
-    if (n === 0) await notify(w.assignees || [], user, { projectId: w.project_id, taskId: w.id, kind: 'unblocked', text: `finished the task that was blocking "${w.title}"` });
-  }
-  if (task.parent_id || !task.recurrence) return;
-  const today = todayStr();
-  let due = shiftDate(task.due_date || today, task.recurrence);
-  let start = task.start_date ? shiftDate(task.start_date, task.recurrence) : null;
-  for (let i = 0; i < 400 && due < today; i++) {
-    due = shiftDate(due, task.recurrence);
-    if (start) start = shiftDate(start, task.recurrence);
-  }
-  const [status] = await sql`select id from statuses where project_id = ${task.project_id} and not is_done order by position limit 1`;
-  const [{ pos }] = await sql`select coalesce(max(position), -1) + 1 as pos from tasks where project_id = ${task.project_id}`;
-  const [next] = await sql`insert into tasks (project_id, status_id, milestone_id, title, description, priority, start_date, due_date, position, tags, assignees, recurrence, created_by)
-    values (${task.project_id}, ${status?.id || task.status_id}, ${task.milestone_id}, ${task.title}, ${task.description}, ${task.priority}, ${start}, ${due}, ${pos},
-      ${sql.json(task.tags || [])}, ${sql.json(task.assignees || [])}, ${task.recurrence}, ${task.created_by}) returning id`;
-  await sql`insert into tasks (project_id, parent_id, title, position, created_by)
-    select project_id, ${next.id}, title, position, created_by from tasks where parent_id = ${task.id}`;
-  await sql`update tasks set recurrence = '' where id = ${task.id}`;
-}
-
 
 /**
  * Sends the invitation by email when RESEND_API_KEY is set.
@@ -446,7 +410,7 @@ export const handlers: Record<string, Handler> = {
   async 'task.get'(p, { user }) {
     const sql = db();
     const task = await entity(user, 'tasks', p.id);
-    const [subtasks, comments, files, time, blocking, activity, entries] = await Promise.all([
+    const [subtasks, comments, files, time, activity, entries] = await Promise.all([
       sql`select id, title, completed_at, position from tasks where parent_id = ${p.id} order by position`,
       sql`select c.*, coalesce((select jsonb_agg(jsonb_build_object('id', f.id, 'name', f.name, 'mime', f.mime, 'size', f.size, 'url', f.url) order by f.created_at)
             from files f where f.comment_id = c.id), '[]') as attachments
@@ -456,7 +420,6 @@ export const handlers: Record<string, Handler> = {
       sql`select coalesce(sum(seconds) filter (where ended_at is not null), 0)::int as seconds,
           min(started_at) filter (where ended_at is null) as running_since
         from time_entries where task_id = ${p.id}`,
-      sql`select id, title, completed_at from tasks where project_id = ${task.project_id} and jsonb_exists(blocked_by, ${String(p.id)})`,
       sql`select id, user_id, text, created_at from activity where task_id = ${p.id} order by created_at limit 100`,
       sql`select id, user_id, seconds, ended_at as created_at from time_entries
         where task_id = ${p.id} and ended_at is not null order by ended_at limit 100`,
@@ -468,7 +431,6 @@ export const handlers: Record<string, Handler> = {
       files,
       seconds: time[0].seconds,
       runningSince: time[0].running_since,
-      blocking,
       activity,
       entries,
     };
@@ -482,7 +444,6 @@ export const handlers: Record<string, Handler> = {
     if (typeof patch.title === 'string') u.title = need(patch.title, 'Task title');
     if (typeof patch.description === 'string') u.description = patch.description.slice(0, 20000);
     if (typeof patch.priority === 'string' && ['none', 'low', 'medium', 'high'].includes(patch.priority)) u.priority = patch.priority;
-    if (typeof patch.recurrence === 'string' && RECURRENCES.includes(patch.recurrence)) u.recurrence = patch.recurrence;
     for (const k of ['start_date', 'due_date']) if (k in patch) u[k] = dateOrNull(patch[k]);
     if ('milestone_id' in patch) u.milestone_id = patch.milestone_id || null;
     if (Array.isArray(patch.tags)) u.tags = sql.json(uniq(patch.tags.map((t: any) => text(t, 40))));
@@ -492,37 +453,17 @@ export const handlers: Record<string, Handler> = {
       u.assignees = sql.json(next);
       newAssignees = next.filter((id) => !(task.assignees || []).includes(id));
     }
-    if (Array.isArray(patch.blocked_by)) {
-      const ids = uniq(patch.blocked_by).filter((id) => id !== task.id);
-      const all = await sql`select id, blocked_by from tasks where project_id = ${task.project_id} and parent_id is null`;
-      const map = new Map<string, string[]>(all.map((t: any) => [t.id, t.blocked_by || []]));
-      for (const id of ids) if (!map.has(id)) throw new HttpError(400, 'A task can only depend on tasks in the same project');
-      // refuse circular chains: none of the blockers may (directly or indirectly) wait on this task
-      const seen = new Set<string>();
-      const stack = [...ids];
-      while (stack.length) {
-        const id = stack.pop()!;
-        if (id === task.id) throw new HttpError(400, 'That would create a circular dependency');
-        if (seen.has(id)) continue;
-        seen.add(id);
-        stack.push(...(map.get(id) || []));
-      }
-      u.blocked_by = sql.json(ids);
-    }
     let logLine = '';
-    let completing = false;
     if (patch.status_id && patch.status_id !== task.status_id) {
       const [s] = await sql`select * from statuses where id = ${patch.status_id} and project_id = ${task.project_id}`;
       if (s) {
         u.status_id = s.id;
         u.completed_at = s.is_done ? task.completed_at || new Date() : null;
-        completing = s.is_done && !task.completed_at;
         logLine = s.is_done ? `completed "${task.title}"` : `moved "${task.title}" to ${s.name}`;
       }
     }
     if (typeof patch.done === 'boolean') {
       u.completed_at = patch.done ? task.completed_at || new Date() : null;
-      completing = patch.done && !task.completed_at;
       if (!task.parent_id) {
         const [s] = await sql`select * from statuses where project_id = ${task.project_id} and is_done = ${patch.done} order by position limit 1`;
         if (s) u.status_id = s.id;
@@ -533,7 +474,6 @@ export const handlers: Record<string, Handler> = {
     const [row] = await sql`update tasks set ${sql(u)} where id = ${p.id} returning *`;
     if (logLine) await log(task.project_id, user.id, logLine, task.id);
     if (newAssignees.length) await notify(newAssignees, user, { projectId: task.project_id, taskId: task.id, kind: 'assigned', text: `assigned you to "${row.title}"` });
-    if (completing) await afterComplete(row, user);
     return row;
   },
 
@@ -542,11 +482,10 @@ export const handlers: Record<string, Handler> = {
     const task = await entity(user, 'tasks', p.id);
     const [s] = await sql`select * from statuses where id = ${p.statusId} and project_id = ${task.project_id}`;
     if (!s) throw new HttpError(404, 'List not found');
-    const [row] = await sql`update tasks set status_id = ${s.id}, completed_at = ${s.is_done ? sql`coalesce(completed_at, now())` : null} where id = ${p.id} returning *`;
+    await sql`update tasks set status_id = ${s.id}, completed_at = ${s.is_done ? sql`coalesce(completed_at, now())` : null} where id = ${p.id}`;
     await sql`update tasks t set position = v.pos from jsonb_array_elements_text(${sql.json(p.orderedIds || [])}) with ordinality as v(id, pos)
       where t.id = v.id::uuid and t.project_id = ${task.project_id}`;
     if (task.status_id !== s.id) await log(task.project_id, user.id, s.is_done ? `completed "${task.title}"` : `moved "${task.title}" to ${s.name}`, task.id);
-    if (s.is_done && !task.completed_at) await afterComplete(row, user);
     return { ok: true };
   },
 
@@ -554,7 +493,6 @@ export const handlers: Record<string, Handler> = {
     const sql = db();
     const task = await entity(user, 'tasks', p.id);
     await sql`delete from tasks where id = ${p.id}`;
-    await sql`update tasks set blocked_by = blocked_by - ${String(p.id)} where project_id = ${task.project_id} and jsonb_exists(blocked_by, ${String(p.id)})`;
     if (!task.parent_id) await log(task.project_id, user.id, `deleted task "${task.title}"`);
     return { ok: true };
   },
@@ -811,7 +749,7 @@ export const handlers: Record<string, Handler> = {
 
   /* ───────────── notifications ───────────── */
   async 'notif.list'(_p, { user }) {
-    return db()`select n.id, n.actor_id, n.project_id, n.task_id, n.kind, n.text, n.read, n.created_at, p.name as project_name
+    return db()`select n.id, n.actor_id, n.project_id, n.task_id, n.kind, n.text, n.link, n.read, n.created_at, p.name as project_name
       from notifications n left join projects p on p.id = n.project_id
       where n.user_id = ${user.id} order by n.created_at desc limit 60`;
   },
@@ -867,7 +805,44 @@ export const handlers: Record<string, Handler> = {
     if (!marked.length) throw new HttpError(404, 'Conversation not found');
     const [row] = await sql`insert into dm_messages (conversation_id, user_id, body) values (${p.id}, ${user.id}, ${body}) returning id`;
     await sql`update conversations set updated_at = now() where id = ${p.id}`;
+    const others = await sql`select user_id from conversation_members where conversation_id = ${p.id} and user_id <> ${user.id}`;
+    const preview = body.length > 90 ? `${body.slice(0, 90)}…` : body;
+    await notify(others.map((r: any) => r.user_id), user, { kind: 'dm', text: `messaged you: ${preview}`, link: `/chat?c=${p.id}` });
     return row;
+  },
+
+  /* ───────────── desktop notifications ───────────── */
+  async 'push.config'(_p, { user }) {
+    const sql = db();
+    const [{ n }] = await sql`select count(*)::int as n from push_subscriptions where user_id = ${user.id}`;
+    return { enabled: pushEnabled(), publicKey: publicKey(), devices: n };
+  },
+
+  /** Stores the browser's push subscription so notifications arrive when the tab is closed. */
+  async 'push.subscribe'(p, { user }) {
+    if (!pushEnabled()) throw new HttpError(400, 'Push notifications are not configured for this workspace');
+    const sub = p.subscription || {};
+    const endpoint = text(sub.endpoint, 1000);
+    const p256dh = text(sub.keys?.p256dh, 500);
+    const auth = text(sub.keys?.auth, 500);
+    if (!endpoint || !p256dh || !auth) throw new HttpError(400, 'That subscription is not usable');
+    await db()`insert into push_subscriptions (user_id, endpoint, p256dh, auth, user_agent)
+      values (${user.id}, ${endpoint}, ${p256dh}, ${auth}, ${text(p.userAgent, 300)})
+      on conflict (endpoint) do update set user_id = excluded.user_id, p256dh = excluded.p256dh, auth = excluded.auth`;
+    return { ok: true };
+  },
+
+  async 'push.unsubscribe'(p, { user }) {
+    const endpoint = text(p.endpoint, 1000);
+    if (endpoint) await db()`delete from push_subscriptions where endpoint = ${endpoint} and user_id = ${user.id}`;
+    else await db()`delete from push_subscriptions where user_id = ${user.id}`;
+    return { ok: true };
+  },
+
+  /** Sends a test notification to this person's own devices. */
+  async 'push.test'(_p, { user }) {
+    await sendPush(user.id, { title: 'Teqnite Tasks', body: 'Desktop notifications are working.', url: '/', tag: 'test' });
+    return { ok: true };
   },
 
   /* ───────────── invitations ───────────── */

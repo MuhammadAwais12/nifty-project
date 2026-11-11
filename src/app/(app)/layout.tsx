@@ -12,9 +12,9 @@ import {
   fmtClock, fmtDateTime, useNow,
 } from '@/components/ui';
 import { CreateMenu, GlobalSearch, SearchButton, ThemeToggle, useSearchHotkey } from '@/components/Chrome';
+import { NotificationPrompt, NotificationSetting, useNotifications } from '@/components/Notify';
 import { Logo } from '@/components/Logo';
 import { ProjectForm } from '@/components/ProjectForm';
-import { TaskModal } from '@/components/TaskModal';
 import { QuickTask } from '@/components/QuickTask';
 
 function TimerPill({ timer }: { timer: any }) {
@@ -37,7 +37,7 @@ function TimerPill({ timer }: { timer: any }) {
   );
 }
 
-function ProfileModal({ me, onClose }: { me: any; onClose: () => void }) {
+function ProfileModal({ me, onClose, notify }: { me: any; onClose: () => void; notify: ReturnType<typeof useNotifications> }) {
   const [form, setForm] = useState({ name: me.name, color: me.color, currentPassword: '', newPassword: '' });
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -69,6 +69,7 @@ function ProfileModal({ me, onClose }: { me: any; onClose: () => void }) {
           </div>
           <p className="mt-1.5 text-xs text-fg/45">If you signed up with Google, setting a password here lets you use either way in.</p>
         </div>
+        <NotificationSetting n={notify} />
         <div className="flex justify-end gap-2">
           <button type="button" className="btn-ghost" onClick={onClose}>Cancel</button>
           <button className="btn-primary">Save</button>
@@ -87,7 +88,7 @@ const NAV = [
   { href: '/team', label: 'Team', icon: Users, min: 'member' },
 ] as const;
 
-function NotificationsPanel({ users, onClose, openTask }: { users: any[]; onClose: () => void; openTask: (id: string) => void }) {
+function NotificationsPanel({ users, onClose, notify }: { users: any[]; onClose: () => void; notify: ReturnType<typeof useNotifications> }) {
   const router = useRouter();
   const { data } = useQ<any[]>('notif.list', undefined, { refreshInterval: 15000 });
   useEffect(() => {
@@ -98,7 +99,7 @@ function NotificationsPanel({ users, onClose, openTask }: { users: any[]; onClos
   function open(n: any) {
     if (!n.read) act('notif.read', { id: n.id });
     onClose();
-    if (n.task_id) openTask(n.task_id);
+    if (n.task_id) router.push(`/tasks/${n.task_id}`);
     else if (n.project_id) router.push(`/projects/${n.project_id}${n.kind === 'mention' ? '?tab=discussions' : ''}`);
   }
   return (
@@ -109,6 +110,7 @@ function NotificationsPanel({ users, onClose, openTask }: { users: any[]; onClos
           <h2 className="font-bold">Notifications</h2>
           <button className="btn-ghost px-2 py-1 text-xs" onClick={() => act('notif.read', {})}><CheckCheck size={14} /> Mark all read</button>
         </div>
+        <NotificationPrompt n={notify} />
         <div className="min-h-0 flex-1 overflow-y-auto p-1">
           {!data && <Spinner />}
           {data && !data.length && <p className="px-4 py-10 text-center text-sm text-fg/50">Nothing yet. You&apos;ll hear about assignments, comments and @mentions here.</p>}
@@ -136,7 +138,6 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const { data, error } = useQ('bootstrap', undefined, { refreshInterval: 15000 });
   const [bell, setBell] = useState(false);
-  const [taskId, setTaskId] = useState<string | null>(null);
   const [newProject, setNewProject] = useState(false);
   const [newTask, setNewTask] = useState(false);
   const [profile, setProfile] = useState(false);
@@ -146,6 +147,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const [filter, setFilter] = useState('');
   const [search, setSearch] = useState(false);
   useSearchHotkey(() => setSearch(true));
+  const notify = useNotifications();
 
   useEffect(() => { if (error?.status === 401) router.replace('/login'); }, [error, router]);
   useEffect(() => setNavOpen(false), [pathname]);
@@ -165,7 +167,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             canEdit: data.me.role !== 'guest',
             canManage: RANK[data.me.role as keyof typeof RANK] >= RANK.manager,
             isAdmin: RANK[data.me.role as keyof typeof RANK] >= RANK.admin,
-            openTask: setTaskId,
+            openTask: (id: string) => router.push(`/tasks/${id}`),
           }
         : null,
     [data]
@@ -346,11 +348,10 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       </div>
 
       <GlobalSearch open={search} onClose={() => setSearch(false)} />
-      {bell && <NotificationsPanel users={ctx.users} onClose={() => setBell(false)} openTask={setTaskId} />}
-      {taskId && <TaskModal key={taskId} id={taskId} onClose={() => setTaskId(null)} />}
+      {bell && <NotificationsPanel users={ctx.users} onClose={() => setBell(false)} notify={notify} />}
       {newProject && <ProjectForm onClose={() => setNewProject(false)} />}
       {newTask && <QuickTask onClose={() => setNewTask(false)} />}
-      {profile && <ProfileModal me={ctx.me} onClose={() => setProfile(false)} />}
+      {profile && <ProfileModal me={ctx.me} onClose={() => setProfile(false)} notify={notify} />}
       <Toasts />
     </AppContext.Provider>
   );

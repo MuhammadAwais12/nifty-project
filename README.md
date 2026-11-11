@@ -1,6 +1,6 @@
 # Teqnite Tasks
 
-A project and task management workspace for the Teqnite team, in the shape of Nifty: projects grouped into portfolios, tasks in board / list / timeline / swimlane / calendar views with dependencies and repeating tasks, milestones on a roadmap, project chat and direct messages, discussions, docs, files, time tracking, reports, notifications with @mentions, global search, light and dark themes, and five roles from owner down to client guest.
+A project and task management workspace for the Teqnite team, in the shape of Nifty: projects grouped into portfolios, tasks in board / list / timeline / swimlane / calendar views, a full-page task screen with its own link, milestones on a roadmap, project chat and direct messages, threaded discussions with images, docs, files, time tracking, reports, desktop notifications with @mentions, global search, light and dark themes, and five roles from owner down to client guest.
 
 Built with Next.js 15 (App Router), React 19, TypeScript, Tailwind CSS and Postgres. It is one deployable app — no separate backend, no build step for the database.
 
@@ -36,6 +36,9 @@ Push the new code to the same GitHub repository. Vercel redeploys, and the datab
 | `AUTH_URL` | No | Only if Google redirects to the wrong address. Your public origin, no trailing slash. |
 | `RESEND_API_KEY` | No | Sends invitation emails through [Resend](https://resend.com). Without it, invitations still work — the admin copies the link. |
 | `INVITE_FROM` | No | The From address on invitation emails. Must be a domain you verified in Resend. |
+| `VAPID_PUBLIC_KEY` | No | Lets desktop notifications arrive with the tab closed. Without it they still appear while Teqnite Tasks is open. |
+| `VAPID_PRIVATE_KEY` | No | The matching private key. |
+| `VAPID_SUBJECT` | No | A `mailto:` address for the push service to contact. Defaults to a placeholder. |
 
 Add any of these in Vercel under *Settings → Environment Variables*, then redeploy.
 
@@ -64,6 +67,18 @@ Everyone else is refused. A Google account cannot create itself a place in your 
 3. Redeploy. Invitations are now emailed, and the link is still shown in the app so you can send it yourself as well.
 
 This is the only outbound email in the app. Everything else — assignments, comments, mentions, unblocked tasks — is an in-app notification on the bell.
+
+### Turning on desktop notifications
+
+Nothing to configure for the basics: each person clicks **Turn on** in the bell panel (or in *Your profile*), their browser asks for permission, and from then on they are told when someone mentions them, messages them, comments on their task or assigns them something. That works while Teqnite Tasks is open in a tab.
+
+To have notifications arrive **when the tab is closed**:
+
+1. Run `npm run vapid` once. It prints a `VAPID_PUBLIC_KEY` and a `VAPID_PRIVATE_KEY`.
+2. Put both in Vercel under *Settings → Environment Variables*, along with `VAPID_SUBJECT=mailto:you@yourdomain.com`.
+3. Redeploy, then each person turns notifications on again so their browser registers a subscription.
+
+Keep the private key secret, and do not change the pair later — every device would have to re-subscribe.
 
 ---
 
@@ -135,14 +150,14 @@ Any Postgres 13+ works, local or hosted. Tables are created on first request, so
 | Team | People, roles, invitations, shared links, deactivation, ownership transfer. |
 | Search | ⌘K / Ctrl+K from anywhere. Finds tasks, projects, docs and people — only the ones you are allowed to see. |
 | Project → Home | Progress, upcoming deadlines, milestones, members and recent activity. |
-| Project → Tasks | Board, list, timeline (Gantt with dependency arrows), swimlanes by assignee or milestone, and calendar — all over the same records. |
+| Project → Tasks | Board, list, timeline, swimlanes by assignee or milestone, and calendar — all over the same records. |
 | Project → Milestones | A roadmap with dates and automatic progress from linked tasks. |
 | Project → Discussions | Project conversation with threaded replies, @mentions, inline images and attachments; edit or delete your own messages, and turn any message into a task. |
 | Project → Docs | Markdown documents that save as you type. |
 | Project → Files | Uploads up to 4 MB held in the database, plus links to anything bigger. |
 | Project → Time | Start/stop timer, manual entries and a per-person summary. |
-| Tasks | Each task has its own reference (PHA-63), a field grid for assignees, tags, milestone, dates, priority and repeat, Subtasks and Attachments tabs, a live timer in the header, and a comments-and-activity panel on the right. Comments take images and files; paste a screenshot straight in. |
-| Notifications | Assignments, comments, @mentions, being added to a project, and being unblocked. Click one to jump straight to the task. |
+| Tasks | Every task opens as its own full page at `/tasks/<id>`, with a copy-link button so you can paste it into a chat or a doc. It carries a reference (PHA-63), a field grid for assignees, tags, milestone, dates and priority, Subtasks and Attachments tabs, a live timer in the header, and a comments-and-activity panel down the right. Comments take images and files; paste a screenshot straight in. |
+| Notifications | Assignments, comments, @mentions, replies, direct messages and being added to a project — on the bell, and on your desktop once you turn them on. Click one to jump straight to the task or conversation. |
 | Themes | Light and dark, remembered per browser; follows your system setting the first time. |
 
 ---
@@ -153,13 +168,13 @@ Any Postgres 13+ works, local or hosted. Tables are created on first request, so
 - **Images** pasted or attached to a comment, a discussion message or a project chat message show inline, and open full size in a viewer. Files sit behind the same project permissions as everything else.
 - **Mentioning someone who is not on the project** offers to add them, if you are a manager or admin. Assigning works the same way.
 - **The task timer** runs live in the task header. Starting one stops any other timer you have going.
-- **Repeating tasks** create the next copy when you complete the current one, carrying over assignees, subtasks and the milestone. Monthly keeps the same day of the month and clamps it (31 Jan → 28 Feb).
-- **Dependencies** show a Blocked badge and notify the waiting assignees once the blocker is finished. Circular chains are refused.
+- **Task links** are permanent. `/tasks/<id>` opens straight to the task for anyone who may see that project; anyone else gets a polite dead end.
 - **Uploads** are capped at 4 MB because Vercel functions cap request bodies around 4.5 MB. For anything larger, use *Add link*.
 - **Sessions** last 30 days in an httpOnly cookie, marked Secure on https.
 - **Passwords** are hashed with bcrypt. An account created through Google has no password until it sets one in *Your profile*.
 - **Drag and drop** on the board and swimlanes uses the mouse. On a phone, move a task by opening it and changing its list.
 - **Timeline bars** are not draggable; change the dates inside the task.
+- **Desktop notifications** need the person to allow them in their browser, once per device. iPhones only show them if the site is added to the Home Screen first.
 
 ---
 
@@ -168,8 +183,9 @@ Any Postgres 13+ works, local or hosted. Tables are created on first request, so
 Said plainly, so nothing comes as a surprise later:
 
 - **No real-time push.** Screens refresh themselves every few seconds. There is no WebSocket server, because Vercel's serverless functions cannot hold one open. Chat and notifications arrive within about five seconds, not instantly.
-- **No email except invitations.** Notifications live on the bell inside the app.
+- **No email notifications.** Only invitations are emailed. Everything else is the bell plus desktop notifications.
 - **No forms, no automations, no custom fields, no project templates, no goals.**
+- **No task dependencies and no repeating tasks.** Both were removed on request.
 - **No portfolio or folder pages.** A project's *portfolio* is a grouping label on the Overview and in the sidebar, not a page of its own.
 - **No document version history and no simultaneous co-editing.** Two people editing the same doc at the same moment will overwrite each other; the last save wins.
 - **One workspace per deployment.** There is no workspace switcher. To run a second, separate workspace, deploy the app again with its own database.

@@ -12,6 +12,9 @@ Nothing here is a crash or data loss. These are the rough edges worth knowing be
 | Uploads stop at 4 MB | Vercel functions cap request bodies at about 4.5 MB, and files live in Postgres. Use *Add link* for anything larger. |
 | Docs have no version history | Two people editing the same doc at the same time will overwrite each other — the last save wins. There is no lock and no merge. |
 | Replies are one level deep | A discussion message can have replies; a reply cannot have replies of its own. Deleting the parent removes the whole thread. |
+| Desktop notifications are per device | Each person allows them once in each browser they use. A refusal can only be undone in the browser's own site settings, not in the app. |
+| iPhone needs the site on the Home Screen | Safari only delivers web notifications to installed web apps. Add Teqnite Tasks to the Home Screen first. |
+| Push needs VAPID keys | Without them, notifications only appear while a Teqnite Tasks tab is open. |
 | Images are stored in the database | Same 4 MB cap as any other attachment, and they are served through the app rather than a CDN, so a very image-heavy project will feel it. |
 | Only invitations are emailed | And only if `RESEND_API_KEY` is set. Everything else is an in-app notification. |
 | One workspace per deployment | No workspace switcher. A second workspace means a second deployment with its own database. |
@@ -28,8 +31,11 @@ Nothing here is a crash or data loss. These are the rough edges worth knowing be
 - **Reports cover time and workload only.** No burndown, no CSV or PDF export.
 - **Task references do not move.** If you rename a project, existing task numbers keep the old key. Numbers are never reused after a task is deleted.
 - **No reactions on messages or comments**, and no read receipts in chat.
-- **Repeating tasks only repeat on completion.** If a weekly task is never completed, no copy is made. Completing a long-overdue one skips forward to the next future date rather than creating every missed copy.
 - **Timers are per person, one at a time.** Starting a timer stops any other timer you have running.
+
+## Removed on request
+
+Task dependencies and repeating tasks were built in v2 and taken out again in v5. The two database columns are left in place so older databases still load, but nothing reads or writes them.
 
 ## Not built from the original brief
 

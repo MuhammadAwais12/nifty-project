@@ -6,6 +6,7 @@ export const viewport = { themeColor: [{ media: '(prefers-color-scheme: light)',
 export const metadata: Metadata = {
   title: 'Teqnite Tasks',
   description: 'Projects, tasks, milestones, discussions, docs and time tracking for the Teqnite team.',
+  manifest: '/manifest.webmanifest',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
