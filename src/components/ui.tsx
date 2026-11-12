@@ -17,10 +17,13 @@ export const ROLE_BLURB: Record<Role, string> = {
   guest: 'Client access: views their projects, comments and shares files.',
 };
 
+export type Portfolio = { id: string; name: string; color: string; position: number; project_count: number };
+
 export type AppCtx = {
   me: UserT;
   users: UserT[];
   projects: any[];
+  portfolios: Portfolio[];
   timer: any | null;
   unread: number;
   dmUnread: number;

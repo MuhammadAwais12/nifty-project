@@ -261,4 +261,29 @@ create table if not exists push_subscriptions (
 );
 create index if not exists push_user_idx on push_subscriptions(user_id);
 alter table notifications add column if not exists link text;
+
+/* ── v6: portfolios as real folders, not a text label ── */
+create table if not exists portfolios (
+  id uuid primary key default gen_random_uuid(),
+  name text not null,
+  color text not null default '#5b6cff',
+  position int not null default 0,
+  created_by uuid references users(id) on delete set null,
+  created_at timestamptz not null default now()
+);
+alter table projects add column if not exists portfolio_id uuid references portfolios(id) on delete set null;
+create index if not exists projects_portfolio_idx on projects(portfolio_id);
+
+-- one-time: turn the old free-text portfolio labels into real rows
+insert into portfolios (name, position)
+select distinct p.portfolio, 0 from projects p
+where coalesce(p.portfolio, '') <> ''
+  and not exists (select 1 from portfolios f where f.name = p.portfolio)
+  and not exists (select 1 from settings where key = 'portfolios_migrated');
+update projects p set portfolio_id = f.id from portfolios f
+where p.portfolio_id is null and coalesce(p.portfolio, '') <> '' and f.name = p.portfolio;
+update portfolios f set position = n.seq from (
+  select id, (row_number() over (order by created_at, name)) - 1 as seq from portfolios
+) n where f.id = n.id and not exists (select 1 from settings where key = 'portfolios_migrated');
+insert into settings (key, value) values ('portfolios_migrated', '1') on conflict (key) do nothing;
 `;

@@ -4,17 +4,16 @@ import { useRouter } from 'next/navigation';
 import { act } from '@/lib/api';
 import { COLORS, ColorPicker, Modal, useApp } from './ui';
 
-export function ProjectForm({ project, onClose }: { project?: any; onClose: () => void }) {
-  const { projects } = useApp();
+export function ProjectForm({ project, onClose, portfolioId }: { project?: any; onClose: () => void; portfolioId?: string | null }) {
+  const { projects, portfolios } = useApp();
   const router = useRouter();
   const [form, setForm] = useState({
     name: project?.name || '',
     description: project?.description || '',
-    portfolio: project?.portfolio || '',
+    portfolioId: project?.portfolio_id || portfolioId || '',
     color: project?.color || COLORS[projects.length % COLORS.length],
   });
   const [busy, setBusy] = useState(false);
-  const portfolios = Array.from(new Set(projects.map((p) => p.portfolio).filter(Boolean)));
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -39,12 +38,11 @@ export function ProjectForm({ project, onClose }: { project?: any; onClose: () =
         </div>
         <div>
           <label className="label" htmlFor="pport">Portfolio</label>
-          <input id="pport" className="input" list="portfolios" value={form.portfolio} onChange={(e) => setForm({ ...form, portfolio: e.target.value })} placeholder="Group projects, e.g. Clients or Internal" />
-          <datalist id="portfolios">
-            {portfolios.map((p) => (
-              <option key={p} value={p} />
-            ))}
-          </datalist>
+          <select id="pport" className="input" value={form.portfolioId} onChange={(e) => setForm({ ...form, portfolioId: e.target.value })}>
+            <option value="">No portfolio</option>
+            {portfolios.map((f: any) => <option key={f.id} value={f.id}>{f.name}</option>)}
+          </select>
+          <p className="mt-1 text-xs text-fg/45">Portfolios group projects in the sidebar. Create new ones there with “Add portfolio”.</p>
         </div>
         <div>
           <span className="label">Color</span>

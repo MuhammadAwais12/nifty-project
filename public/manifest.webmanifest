@@ -1,0 +1,9 @@
+{
+  "name": "Teqnite Tasks",
+  "short_name": "Teqnite Tasks",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0f101a",
+  "theme_color": "#ff5a36",
+  "icons": [{ "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" }]
+}

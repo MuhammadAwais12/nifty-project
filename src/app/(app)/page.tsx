@@ -28,14 +28,16 @@ function ProjectCard({ p }: { p: any }) {
 }
 
 export default function Overview() {
-  const { me, projects, canEdit, canManage } = useApp();
+  const { me, projects, portfolios, canEdit, canManage } = useApp();
   const [creating, setCreating] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
   const active = projects.filter((p) => !p.archived);
   const archived = projects.filter((p) => p.archived);
-  const groups: Record<string, any[]> = {};
-  for (const p of active) (groups[p.portfolio || 'Other projects'] ||= []).push(p);
-  const names = Object.keys(groups).sort((a, b) => (a === 'Other projects' ? 1 : b === 'Other projects' ? -1 : a.localeCompare(b)));
+  const groups: { name: string; color?: string; list: any[] }[] = portfolios
+    .map((f: any) => ({ name: f.name, color: f.color, list: active.filter((p) => p.portfolio_id === f.id) }))
+    .filter((g) => g.list.length);
+  const loose = active.filter((p) => !p.portfolio_id);
+  if (loose.length) groups.push({ name: groups.length ? 'Other projects' : 'All projects', list: loose });
   const hour = new Date().getHours();
   const totals = active.reduce((a, p) => ({ open: a.open + p.task_count - p.done_count, overdue: a.overdue + p.overdue_count }), { open: 0, overdue: 0 });
 
@@ -58,11 +60,16 @@ export default function Overview() {
           action={canManage ? <button className="btn-primary" onClick={() => setCreating(true)}><Plus size={15} /> New project</button> : undefined} />
       )}
 
-      {names.map((g) => (
-        <section key={g} className="mb-8">
-          {(names.length > 1 || g !== 'Other projects') && <h2 className="mb-3 text-[11px] font-bold uppercase tracking-widest text-fg/45">{g}</h2>}
+      {groups.map((g) => (
+        <section key={g.name} className="mb-8">
+          {groups.length > 1 && (
+            <h2 className="mb-3 flex items-center gap-2 text-[11px] font-bold uppercase tracking-widest text-fg/45">
+              {g.color && <span className="h-2 w-2 rounded-[3px]" style={{ background: g.color }} />} {g.name}
+              <span className="text-fg/30">{g.list.length}</span>
+            </h2>
+          )}
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-            {groups[g].map((p) => <ProjectCard key={p.id} p={p} />)}
+            {g.list.map((p) => <ProjectCard key={p.id} p={p} />)}
           </div>
         </section>
       ))}

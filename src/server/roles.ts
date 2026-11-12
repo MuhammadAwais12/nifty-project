@@ -109,6 +109,10 @@ export const PERMS: Record<string, Role[] | null> = {
 
   // managers and up: shape the workspace
   'project.create': ['owner', 'admin', 'manager'],
+  'portfolio.create': ['owner', 'admin', 'manager'],
+  'portfolio.update': ['owner', 'admin', 'manager'],
+  'portfolio.delete': ['owner', 'admin', 'manager'],
+  'portfolio.reorder': ['owner', 'admin', 'manager'],
   'project.delete': ['owner', 'admin', 'manager'],
   'member.set': ['owner', 'admin', 'manager'],
   'invite.create': ['owner', 'admin', 'manager'],

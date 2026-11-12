@@ -53,6 +53,15 @@ async function log(projectId: string, userId: string, message: string, taskId?: 
   await db()`insert into activity (project_id, user_id, text, task_id) values (${projectId}, ${userId}, ${message}, ${taskId || null})`;
 }
 
+/** Checks a portfolio exists, and turns '' or null into "no portfolio". */
+async function validPortfolio(id: any): Promise<string | null> {
+  const value = text(id, 60);
+  if (!value) return null;
+  const [row] = await db()`select id from portfolios where id = ${value}`;
+  if (!row) throw new HttpError(404, 'That portfolio no longer exists');
+  return row.id;
+}
+
 /** A short per-project key like PHA, used for task numbers (PHA-63). */
 async function projectKey(name: string): Promise<string> {
   const sql = db();
@@ -188,7 +197,7 @@ export const handlers: Record<string, Handler> = {
     const visibleUsers = user.role === 'guest'
       ? sql`where u.id = ${user.id} or exists (select 1 from project_members a join project_members b on a.project_id = b.project_id where a.user_id = u.id and b.user_id = ${user.id})`
       : sql``;
-    const [users, projects, timer, unread, dm] = await Promise.all([
+    const [users, projects, portfolios, timer, unread, dm] = await Promise.all([
       sql`select u.id, u.name, u.email, u.role, u.color, u.avatar_url, u.active from users u ${visibleUsers} order by u.name`,
       sql`select p.*,
           (select count(*)::int from tasks t where t.project_id = p.id and t.parent_id is null) as task_count,
@@ -200,6 +209,9 @@ export const handlers: Record<string, Handler> = {
             and g.user_id is distinct from ${user.id}
             and g.created_at > coalesce((select cr.last_read_at from channel_reads cr where cr.project_id = p.id and cr.user_id = ${user.id}), 'epoch'::timestamptz)) as chat_unread
         from projects p ${mine} order by p.archived, p.created_at`,
+      sql`select f.id, f.name, f.color, f.position,
+          (select count(*)::int from projects p where p.portfolio_id = f.id) as project_count
+        from portfolios f order by f.position, f.name`,
       sql`select e.id, e.project_id, e.task_id, e.started_at, t.title as task_title, p.name as project_name
         from time_entries e join projects p on p.id = e.project_id left join tasks t on t.id = e.task_id
         where e.user_id = ${user.id} and e.ended_at is null order by e.started_at desc limit 1`,
@@ -208,7 +220,7 @@ export const handlers: Record<string, Handler> = {
         where me.user_id = ${user.id} and exists (select 1 from dm_messages d where d.conversation_id = me.conversation_id and d.created_at > me.last_read_at and d.user_id is distinct from ${user.id})`,
     ]);
     const channelUnread = projects.reduce((n: number, p: any) => n + (p.chat_unread || 0), 0);
-    return { me: user, users, projects, timer: timer[0] || null, unread: unread[0].n, dmUnread: dm[0].n + channelUnread, channelUnread };
+    return { me: user, users, projects, portfolios, timer: timer[0] || null, unread: unread[0].n, dmUnread: dm[0].n + channelUnread, channelUnread };
   },
 
   /** Marks a project's chat channel as read up to now. */
@@ -250,13 +262,49 @@ export const handlers: Record<string, Handler> = {
       order by t.due_date nulls last, t.created_at`;
   },
 
+  /* ───────────── portfolios ───────────── */
+  /** A portfolio is a folder of projects. Managers and up can shape them. */
+  async 'portfolio.create'(p, { user }) {
+    const sql = db();
+    const name = need(p.name, 'Portfolio name');
+    const [{ next }] = await sql`select coalesce(max(position), -1) + 1 as next from portfolios`;
+    const [row] = await sql`insert into portfolios (name, color, position, created_by)
+      values (${name}, ${text(p.color) || '#5b6cff'}, ${next}, ${user.id}) returning *`;
+    return row;
+  },
+
+  async 'portfolio.update'(p) {
+    const sql = db();
+    const u: any = {};
+    if (typeof p.name === 'string') u.name = need(p.name, 'Portfolio name');
+    if (typeof p.color === 'string') u.color = text(p.color);
+    if (!Object.keys(u).length) return null;
+    const [row] = await sql`update portfolios set ${sql(u)} where id = ${p.id} returning *`;
+    if (!row) throw new HttpError(404, 'Portfolio not found');
+    return row;
+  },
+
+  /** Removes the folder. The projects inside it stay, with no portfolio. */
+  async 'portfolio.delete'(p) {
+    await db()`delete from portfolios where id = ${p.id}`;
+    return { ok: true };
+  },
+
+  async 'portfolio.reorder'(p) {
+    const ids = uniq(Array.isArray(p.ids) ? p.ids : []);
+    const sql = db();
+    for (let i = 0; i < ids.length; i++) await sql`update portfolios set position = ${i} where id = ${ids[i]}`;
+    return { ok: true };
+  },
+
   /* ───────────── projects ───────────── */
   async 'project.create'(p, { user }) {
     const sql = db();
     const name = need(p.name, 'Project name');
     const [{ n }] = await sql`select count(*)::int as n from projects`;
-    const [project] = await sql`insert into projects (name, description, color, portfolio, key, created_by)
-      values (${name}, ${text(p.description)}, ${text(p.color) || pickColor(n)}, ${text(p.portfolio, 80)}, ${await projectKey(name)}, ${user.id}) returning *`;
+    const portfolioId = await validPortfolio(p.portfolioId);
+    const [project] = await sql`insert into projects (name, description, color, portfolio_id, key, created_by)
+      values (${name}, ${text(p.description)}, ${text(p.color) || pickColor(n)}, ${portfolioId}, ${await projectKey(name)}, ${user.id}) returning *`;
     await sql`insert into project_members (project_id, user_id) values (${project.id}, ${user.id})`;
     const names = ['To do', 'In progress', 'Review', 'Done'];
     for (let i = 0; i < names.length; i++) {
@@ -270,7 +318,8 @@ export const handlers: Record<string, Handler> = {
     const sql = db();
     await manages(user, p.id);
     const u: any = {};
-    for (const k of ['name', 'description', 'color', 'portfolio']) if (typeof p[k] === 'string') u[k] = text(p[k]);
+    for (const k of ['name', 'description', 'color']) if (typeof p[k] === 'string') u[k] = text(p[k]);
+    if ('portfolioId' in p) u.portfolio_id = await validPortfolio(p.portfolioId);
     if (typeof p.archived === 'boolean') u.archived = p.archived;
     if ('name' in u && !u.name) throw new HttpError(400, 'Project name is required');
     if (!Object.keys(u).length) return null;

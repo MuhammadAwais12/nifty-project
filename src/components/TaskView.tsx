@@ -3,7 +3,7 @@ import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import {
-  Check, Paperclip, Play, Square, Trash2, X, Plus, Link2, CheckCircle2, Circle, ArrowLeft,
+  Check, Paperclip, Play, Square, Trash2, X, Plus, Link2, CheckCircle2, Circle, ArrowLeft, Maximize2,
   MessageSquare, Activity as ActivityIcon, Flag, Calendar, Tag as TagIcon, ListTodo, Users, MoreHorizontal, Send, Pencil,
 } from 'lucide-react';
 import { act, rpc, refresh, toast, uploadFile, useQ } from '@/lib/api';
@@ -22,8 +22,18 @@ function Field({ icon: Icon, label, children }: { icon: any; label: string; chil
   );
 }
 
-/** The full-page task screen at /tasks/<id>. */
-export function TaskView({ id }: { id: string }) {
+/** Keeps a textarea exactly as tall as the text inside it. */
+function grow(el: HTMLTextAreaElement | null, min: number) {
+  if (!el) return;
+  el.style.height = 'auto';
+  el.style.height = `${Math.max(min, el.scrollHeight)}px`;
+}
+
+/**
+ * The task screen. Used two ways: as the page at /tasks/<id>, and as a panel
+ * that slides over the board when `onClose` is given.
+ */
+export function TaskView({ id, onClose }: { id: string; onClose?: () => void }) {
   const router = useRouter();
   const { users, me, timer, canEdit, isAdmin } = useApp();
   const { data, error } = useQ('task.get', { id }, { refreshInterval: 10000 });
@@ -52,7 +62,7 @@ export function TaskView({ id }: { id: string }) {
 
   if (error) {
     return (
-      <div className="p-10 text-center">
+      <div className="flex h-full flex-col items-center justify-center p-10 text-center">
         <p className="font-bold">This task could not be opened</p>
         <p className="mt-1 text-sm text-fg/55">It may have been deleted, or it belongs to a project you are not on.</p>
         <button className="btn-primary mt-4" onClick={() => router.push('/')}>Back to overview</button>
@@ -128,13 +138,17 @@ export function TaskView({ id }: { id: string }) {
       {/* ───── header bar ───── */}
       <header className="flex shrink-0 items-center gap-2 border-b border-line bg-surface px-3 py-2">
         <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
-          <button
-            className="icon-btn shrink-0"
-            onClick={() => (window.history.length > 1 ? router.back() : router.push(`/projects/${task.project_id}?tab=tasks`))}
-            aria-label="Back" title="Back"
-          >
-            <ArrowLeft size={17} />
-          </button>
+          {onClose ? (
+            <button className="icon-btn shrink-0" onClick={onClose} aria-label="Close" title="Close"><X size={17} /></button>
+          ) : (
+            <button
+              className="icon-btn shrink-0"
+              onClick={() => (window.history.length > 1 ? router.back() : router.push(`/projects/${task.project_id}?tab=tasks`))}
+              aria-label="Back" title="Back"
+            >
+              <ArrowLeft size={17} />
+            </button>
+          )}
           <Link href={`/projects/${task.project_id}?tab=tasks`} className="hidden min-w-0 items-center gap-1.5 text-xs font-semibold text-fg/50 hover:text-fg sm:flex">
             <span className="h-2 w-2 shrink-0 rounded-[3px]" style={{ background: pdata.project.color }} />
             <span className="truncate">{pdata.project.name}</span>
@@ -159,6 +173,9 @@ export function TaskView({ id }: { id: string }) {
             <button className="icon-btn" onClick={() => act('time.start', { taskId: id })} aria-label="Start timer" title="Start timer"><Play size={15} fill="currentColor" /></button>
           ))}
           <button className="icon-btn" onClick={copyLink} aria-label="Copy link to this task" title="Copy link to this task"><Link2 size={16} /></button>
+          {onClose && (
+            <Link href={`/tasks/${id}`} className="icon-btn hidden sm:inline-flex" aria-label="Open as a full page" title="Open as a full page"><Maximize2 size={15} /></Link>
+          )}
           <span className="hidden sm:inline"><AvatarStack ids={assignees} size={24} max={3} /></span>
           {canEdit && (
             <button className={`btn ${done ? 'bg-emerald-500/15 text-emerald-600' : 'btn-outline'}`} onClick={() => update({ done: !done })}>
@@ -190,6 +207,8 @@ export function TaskView({ id }: { id: string }) {
                 </button>
                 <textarea
                   key={`t-${task.id}`} defaultValue={task.title} rows={1} aria-label="Task title"
+                  ref={(el) => grow(el, 36)}
+                  onInput={(e) => grow(e.currentTarget, 36)}
                   className={`w-full resize-none rounded-lg border border-transparent bg-transparent px-2 py-1 text-2xl font-extrabold tracking-tight hover:border-line focus:border-ember focus:outline-none ${done ? 'text-fg/50 line-through' : ''}`}
                   onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), (e.target as HTMLTextAreaElement).blur())}
                   onBlur={(e) => {
@@ -201,7 +220,9 @@ export function TaskView({ id }: { id: string }) {
               </div>
               <textarea
                 key={`d-${task.id}`} defaultValue={task.description} aria-label="Description" placeholder="Add a task description…"
-                className="mt-1 min-h-[90px] w-full rounded-lg border border-transparent bg-transparent px-2 py-1.5 text-sm leading-relaxed hover:border-line focus:border-ember focus:outline-none"
+                ref={(el) => grow(el, 160)}
+                onInput={(e) => grow(e.currentTarget, 160)}
+                className="mt-1 min-h-[160px] w-full resize-y overflow-hidden rounded-lg border border-transparent bg-transparent px-2 py-1.5 text-sm leading-relaxed hover:border-line focus:border-ember focus:outline-none"
                 onBlur={(e) => e.target.value !== task.description && update({ description: e.target.value })}
               />
 
