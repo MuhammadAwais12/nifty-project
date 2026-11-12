@@ -82,7 +82,39 @@ Keep the private key secret, and do not change the pair later — every device w
 
 ---
 
-## 3. Roles and what each one can do
+## 3. Getting it onto people's computers and phones
+
+Teqnite Tasks runs in a browser, but nobody has to work in a browser tab.
+
+### Install it as an app (no setup, no store)
+
+Once the site is deployed over https:
+
+| | How | What you get |
+| --- | --- | --- |
+| Windows, Mac, Linux | Chrome or Edge → the **Install** icon at the right of the address bar | Its own window and taskbar icon, no address bar |
+| Android | Chrome → menu → **Install app** | Home screen icon, notifications |
+| iPhone, iPad | Safari → Share → **Add to Home Screen** | Home screen icon. **Notifications only work after this** — Safari does not deliver them to a normal tab |
+
+Updates arrive on their own: it is the same deployment, so a redeploy reaches everyone at their next load.
+
+### The desktop app
+
+`desktop/` holds a small Electron shell around the same deployment. It exists for the three things a browser tab cannot do: sit in the system tray, start with the computer, and keep showing notifications after the window is closed.
+
+```bash
+npm run desktop:install   # once
+npm run desktop           # run it
+npm run desktop:build     # make an installer for this platform
+```
+
+The first launch asks for your workspace address, and remembers it. The tray menu has Open, Start at login, Reload, Change workspace address and Quit; closing the window parks the app in the tray rather than quitting.
+
+Installers are built per platform — a `.exe` on Windows, a `.dmg` on a Mac — so use a GitHub Actions matrix if you want both. Unsigned builds work but warn on first launch; `desktop/README.md` lists the certificates that remove the warning and the environment variables electron-builder expects.
+
+---
+
+## 4. Roles and what each one can do
 
 Every limit below is checked on the server before the action runs. Hiding a button in the interface is never the only thing standing in the way.
 
@@ -111,7 +143,7 @@ Every limit below is checked on the server before the action runs. Hiding a butt
 
 ---
 
-## 4. Inviting people
+## 5. Inviting people
 
 Three ways, all on the **Team** page:
 
@@ -125,7 +157,7 @@ Pending invitations are listed on the Team page, where you can copy the link aga
 
 ---
 
-## 5. Run locally
+## 6. Run locally
 
 ```bash
 npm install
@@ -139,13 +171,14 @@ Any Postgres 13+ works, local or hosted. Tables are created on first request, so
 
 ---
 
-## 6. What's inside
+## 7. What's inside
 
 | Area | What it does |
 | --- | --- |
 | Overview | Your projects grouped by portfolio, with progress, open and overdue counts and the next milestone. |
+| Portfolios | Folders for projects, in the sidebar. Create as many as you like, fold them shut, add a project straight into one, and move a project by dragging it onto another portfolio or using the ⋯ menu on the project. Deleting a portfolio keeps its projects — they just sit outside any folder. |
 | My work | Every open task assigned to you across projects, grouped by due date. |
-| Chat | A channel for every project (the same thread as that project's Discussions tab) plus private one-to-one and group messages, with unread counts. |
+| Chat | Private one-to-one and group messages between people, with unread counts. A project's own conversation lives in its Discussions tab. |
 | Reports | Time logged and workload per person over a date range. |
 | Team | People, roles, invitations, shared links, deactivation, ownership transfer. |
 | Search | ⌘K / Ctrl+K from anywhere. Finds tasks, projects, docs and people — only the ones you are allowed to see. |
@@ -156,37 +189,41 @@ Any Postgres 13+ works, local or hosted. Tables are created on first request, so
 | Project → Docs | Markdown documents that save as you type. |
 | Project → Files | Uploads up to 4 MB held in the database, plus links to anything bigger. |
 | Project → Time | Start/stop timer, manual entries and a per-person summary. |
-| Tasks | Every task opens as its own full page at `/tasks/<id>`, with a copy-link button so you can paste it into a chat or a doc. It carries a reference (PHA-63), a field grid for assignees, tags, milestone, dates and priority, Subtasks and Attachments tabs, a live timer in the header, and a comments-and-activity panel down the right. Comments take images and files; paste a screenshot straight in. |
+| Tasks | A task opens as a panel over whatever you were looking at, so the board stays in view behind it; the expand button opens it as a full page at `/tasks/<id>`, which is also what a shared link opens. There is a copy-link button so you can paste it into a chat or a doc. It carries a reference (PHA-63), a field grid for assignees, tags, milestone, dates and priority, Subtasks and Attachments tabs, a live timer in the header, and a comments-and-activity panel down the right. Comments take images and files; paste a screenshot straight in. |
 | Notifications | Assignments, comments, @mentions, replies, direct messages and being added to a project — on the bell, and on your desktop once you turn them on. Click one to jump straight to the task or conversation. |
 | Themes | Light and dark, remembered per browser; follows your system setting the first time. |
 
 ---
 
-## 7. Good to know
+## 8. Good to know
 
 - **Task references** like `VIS-14` come from a short project key plus a number. The key is made from the project name when you create it.
 - **Images** pasted or attached to a comment, a discussion message or a project chat message show inline, and open full size in a viewer. Files sit behind the same project permissions as everything else.
 - **Mentioning someone who is not on the project** offers to add them, if you are a manager or admin. Assigning works the same way.
 - **The task timer** runs live in the task header. Starting one stops any other timer you have going.
-- **Task links** are permanent. `/tasks/<id>` opens straight to the task for anyone who may see that project; anyone else gets a polite dead end.
+- **Task links** are permanent. `/tasks/<id>` opens straight to the task for anyone who may see that project; anyone else gets a polite dead end. Inside the app a task lives at `?task=<id>` on the screen you were on, so Escape or Back closes it and puts you back where you were.
+- **The description box** starts tall and grows as you type. Drag its bottom corner if you want it taller still.
+- **Portfolios** are only shaped by managers, admins and the owner. Everyone sees the folders their projects sit in.
 - **Uploads** are capped at 4 MB because Vercel functions cap request bodies around 4.5 MB. For anything larger, use *Add link*.
 - **Sessions** last 30 days in an httpOnly cookie, marked Secure on https.
 - **Passwords** are hashed with bcrypt. An account created through Google has no password until it sets one in *Your profile*.
 - **Drag and drop** on the board and swimlanes uses the mouse. On a phone, move a task by opening it and changing its list.
 - **Timeline bars** are not draggable; change the dates inside the task.
 - **Desktop notifications** need the person to allow them in their browser, once per device. iPhones only show them if the site is added to the Home Screen first.
+- **The desktop app needs no VAPID keys.** It keeps running in the tray, so the notifications are the operating system's own. The keys are only for a browser with the tab closed.
 
 ---
 
-## 8. Not included
+## 9. Not included
 
 Said plainly, so nothing comes as a surprise later:
 
-- **No real-time push.** Screens refresh themselves every few seconds. There is no WebSocket server, because Vercel's serverless functions cannot hold one open. Chat and notifications arrive within about five seconds, not instantly.
+- **No real-time push.** Screens refresh themselves every few seconds. There is no WebSocket server, because Vercel's serverless functions cannot hold one open. Notifications and the workspace refresh every 8 seconds, an open conversation every 4. A browser push notification, once allowed, arrives immediately.
 - **No email notifications.** Only invitations are emailed. Everything else is the bell plus desktop notifications.
 - **No forms, no automations, no custom fields, no project templates, no goals.**
 - **No task dependencies and no repeating tasks.** Both were removed on request.
-- **No portfolio or folder pages.** A project's *portfolio* is a grouping label on the Overview and in the sidebar, not a page of its own.
+- **No portfolio page.** Portfolios group projects in the sidebar and on the Overview, but a portfolio has no dashboard or roll-up report of its own.
+- **No folders inside folders.** One level of portfolios, as in Nifty.
 - **No document version history and no simultaneous co-editing.** Two people editing the same doc at the same moment will overwrite each other; the last save wins.
 - **One workspace per deployment.** There is no workspace switcher. To run a second, separate workspace, deploy the app again with its own database.
 - **No file storage service.** Files live in Postgres, which is why they are capped at 4 MB.
@@ -194,7 +231,7 @@ Said plainly, so nothing comes as a surprise later:
 
 ---
 
-## 9. If something goes wrong
+## 10. If something goes wrong
 
 | What you see | What it usually means |
 | --- | --- |
@@ -206,4 +243,4 @@ Said plainly, so nothing comes as a surprise later:
 | "You need an invitation to join this workspace" | Working as intended: ask an admin to invite that email address. |
 | An invitation says it was sent to another address | A personal invitation only works for the address it was issued to. |
 
-See `BUGS_AND_LIMITATIONS.md` for the known rough edges, and `TECHNICAL_DECISIONS.md` for why the app is built the way it is.
+See `desktop/README.md` for the desktop app, `BUGS_AND_LIMITATIONS.md` for the known rough edges, and `TECHNICAL_DECISIONS.md` for why the app is built the way it is.

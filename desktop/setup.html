@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Teqnite Tasks</title>
+    <style>
+      :root { color-scheme: dark; }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0; height: 100vh; display: flex; align-items: center; justify-content: center;
+        background: #0f101a; color: #e8e9f2;
+        font: 15px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      }
+      .card { width: 100%; max-width: 420px; padding: 32px; }
+      .mark { width: 44px; height: 44px; border-radius: 12px; background: #ff5a36; display: grid; place-items: center; font-weight: 800; color: #fff; font-size: 22px; }
+      h1 { font-size: 20px; margin: 20px 0 6px; letter-spacing: -0.01em; }
+      p { margin: 0 0 20px; color: #9fa2b4; font-size: 13.5px; }
+      label { display: block; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: #9fa2b4; margin-bottom: 6px; }
+      input { width: 100%; padding: 11px 12px; border-radius: 10px; border: 1px solid #2f3246; background: #1a1c2b; color: inherit; font-size: 14px; }
+      input:focus { outline: none; border-color: #ff5a36; }
+      button { width: 100%; margin-top: 14px; padding: 11px; border: 0; border-radius: 10px; background: #ff5a36; color: #fff; font-size: 14px; font-weight: 700; cursor: pointer; }
+      button:hover { background: #e2441f; }
+      .err { color: #ff8f73; font-size: 13px; margin-top: 10px; min-height: 18px; }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <div class="mark">T</div>
+      <h1>Connect to your workspace</h1>
+      <p>Paste the address your team uses for Teqnite Tasks. You only do this once.</p>
+      <label for="url">Workspace address</label>
+      <input id="url" type="url" placeholder="https://tasks.yourcompany.com" autofocus />
+      <button id="go">Continue</button>
+      <div class="err" id="err"></div>
+    </div>
+    <script>
+      const input = document.getElementById('url');
+      const err = document.getElementById('err');
+      function submit() {
+        let value = input.value.trim();
+        if (!value) return (err.textContent = 'Enter the address first.');
+        if (!/^https?:\/\//i.test(value)) value = 'https://' + value;
+        try {
+          new URL(value);
+        } catch {
+          return (err.textContent = 'That does not look like a web address.');
+        }
+        err.textContent = '';
+        window.teqniteDesktop.saveUrl(value);
+      }
+      document.getElementById('go').addEventListener('click', submit);
+      input.addEventListener('keydown', (e) => e.key === 'Enter' && submit());
+    </script>
+  </body>
+</html>

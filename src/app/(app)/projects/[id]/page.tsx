@@ -1,12 +1,11 @@
 'use client';
 import { Suspense, useState } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
-import { Archive, Clock, FileText, Flag, FolderOpen, Home, ListTodo, MessageSquare, MessagesSquare, MoreHorizontal, Settings, Trash2, UserPlus, Users } from 'lucide-react';
+import { Archive, Clock, FileText, Flag, FolderOpen, Home, ListTodo, MessageSquare, MoreHorizontal, Settings, Trash2, UserPlus, Users } from 'lucide-react';
 import { act, useQ } from '@/lib/api';
 import { AvatarStack, Menu, MenuItem, Spinner, useApp } from '@/components/ui';
 import { MembersModal } from '@/components/MembersModal';
 import { InviteModal } from '@/components/InviteModal';
-import Link from 'next/link';
 import { ProjectForm } from '@/components/ProjectForm';
 import { ProjectHome } from '@/components/ProjectHome';
 import { Tasks } from '@/components/Tasks';
@@ -91,9 +90,6 @@ function Project() {
               <t.icon size={15} /> {t.label}
             </button>
           ))}
-          <Link href={`/chat?p=${id}`} className="ml-auto inline-flex shrink-0 items-center gap-1.5 border-b-2 border-transparent px-3 py-2 text-sm font-semibold text-fg/50 hover:text-fg" title="Open this project's chat channel">
-            <MessagesSquare size={15} /> <span className="hidden sm:inline">Chat</span>
-          </Link>
         </nav>
       </header>
       <div className="min-h-0 flex-1">

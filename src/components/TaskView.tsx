@@ -1,5 +1,5 @@
 'use client';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import {
@@ -8,7 +8,7 @@ import {
 } from 'lucide-react';
 import { act, rpc, refresh, toast, uploadFile, useQ } from '@/lib/api';
 import {
-  Avatar, AvatarStack, MentionInput, Menu, MenuItem, PRIORITIES, RichText, Spinner,
+  Avatar, AvatarStack, Markdown, MentionInput, Menu, MenuItem, PRIORITIES, RichText, Spinner,
   confirmDelete, fmtClock, fmtDateTime, fmtDur, fmtSize, useApp, useNow, useProjectPeople,
 } from './ui';
 import { AttachButton, AttachmentList, PendingAttachments, useAttachments } from './Attach';
@@ -27,6 +27,49 @@ function grow(el: HTMLTextAreaElement | null, min: number) {
   if (!el) return;
   el.style.height = 'auto';
   el.style.height = `${Math.max(min, el.scrollHeight)}px`;
+}
+
+/**
+ * Description: reads as rich text (links clickable, lists and headings laid
+ * out), turns into an editor when you click it. The editor grows with the
+ * text instead of scrolling inside itself, so the page scroll stays in one
+ * place.
+ */
+function Description({ taskId, value, canEdit, onSave }: {
+  taskId: string; value: string; canEdit: boolean; onSave: (v: string) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  useEffect(() => setEditing(false), [taskId]);
+
+  if (editing) {
+    return (
+      <div className="mt-1">
+        <textarea
+          autoFocus defaultValue={value} aria-label="Description"
+          placeholder="Add a task description… **bold**, - lists and links all work."
+          ref={(el) => { grow(el, 200); el?.setSelectionRange(el.value.length, el.value.length); }}
+          onInput={(e) => grow(e.currentTarget, 200)}
+          className="w-full resize-none rounded-lg border border-ember bg-transparent px-2 py-1.5 text-sm leading-relaxed focus:outline-none"
+          onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); setEditing(false); } }}
+          onBlur={(e) => { if (e.target.value !== value) onSave(e.target.value); setEditing(false); }}
+        />
+        <p className="px-2 pt-1 text-[11px] text-fg/40">Markdown works here. Esc to cancel.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      role={canEdit ? 'button' : undefined} tabIndex={canEdit ? 0 : undefined}
+      onClick={(e) => { if (canEdit && !(e.target as HTMLElement).closest('a')) setEditing(true); }}
+      onKeyDown={(e) => { if (canEdit && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); setEditing(true); } }}
+      className={`mt-1 min-h-[120px] rounded-lg border border-transparent px-2 py-1.5 text-sm ${canEdit ? 'cursor-text hover:border-line' : ''}`}
+    >
+      {value?.trim()
+        ? <Markdown text={value} />
+        : <span className="text-fg/35">{canEdit ? 'Add a task description…' : 'No description.'}</span>}
+    </div>
+  );
 }
 
 /**
@@ -196,9 +239,9 @@ export function TaskView({ id, onClose }: { id: string; onClose?: () => void }) 
         </div>
       </header>
 
-      <div className="grid flex-1 grid-cols-1 overflow-y-auto lg:min-h-0 lg:grid-cols-[1fr_420px] lg:overflow-hidden">
+      <div className="grid min-h-0 flex-1 grid-cols-1 overflow-y-auto overscroll-contain lg:grid-cols-[1fr_380px] lg:overflow-hidden">
         {/* ───── left: the task itself ───── */}
-        <div className="min-w-0 px-5 py-6 lg:overflow-y-auto lg:px-8">
+        <div className="min-w-0 px-5 py-6 lg:overflow-y-auto lg:overscroll-contain lg:px-8">
           <div className="mx-auto max-w-3xl">
             <fieldset disabled={!canEdit} className="m-0 min-w-0 border-0 p-0">
               <div className="flex items-start gap-2">
@@ -218,12 +261,9 @@ export function TaskView({ id, onClose }: { id: string; onClose?: () => void }) 
                   }}
                 />
               </div>
-              <textarea
-                key={`d-${task.id}`} defaultValue={task.description} aria-label="Description" placeholder="Add a task description…"
-                ref={(el) => grow(el, 160)}
-                onInput={(e) => grow(e.currentTarget, 160)}
-                className="mt-1 min-h-[160px] w-full resize-y overflow-hidden rounded-lg border border-transparent bg-transparent px-2 py-1.5 text-sm leading-relaxed hover:border-line focus:border-ember focus:outline-none"
-                onBlur={(e) => e.target.value !== task.description && update({ description: e.target.value })}
+              <Description
+                taskId={task.id} value={task.description || ''} canEdit={canEdit}
+                onSave={(description) => update({ description })}
               />
 
               <div className="mt-5 grid grid-cols-2 gap-x-6 gap-y-5 border-y border-line py-5 sm:grid-cols-3">
@@ -377,7 +417,7 @@ export function TaskView({ id, onClose }: { id: string; onClose?: () => void }) 
             </button>
           </div>
 
-          <div className="space-y-3 px-4 py-3 lg:min-h-0 lg:flex-1 lg:overflow-y-auto">
+          <div className="space-y-3 px-4 py-3 lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:overscroll-contain">
             {!feed.length && <p className="py-8 text-center text-sm text-fg/45">No comments yet.</p>}
             {feed.map((item) => {
               if (item.kind === 'activity') {

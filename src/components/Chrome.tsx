@@ -110,8 +110,10 @@ export function GlobalSearch({ open, onClose }: { open: boolean; onClose: () => 
 
 /* ───────────── quick create ───────────── */
 export function CreateMenu({ onProject, onTask }: { onProject: () => void; onTask: () => void }) {
-  const { canManage, canEdit } = useApp();
-  if (!canEdit) return null;
+  const { canManage, canEdit, projects } = useApp();
+  const hasProject = projects.some((p: any) => !p.archived);
+  // nothing to offer: a member with no project yet has nowhere to put a task
+  if (!canEdit || (!canManage && !hasProject)) return null;
   return (
     <Menu
       align="right"
@@ -123,7 +125,7 @@ export function CreateMenu({ onProject, onTask }: { onProject: () => void; onTas
     >
       {(close) => (
         <>
-          <MenuItem onClick={() => { close(); onTask(); }}><CheckSquare size={15} /> New task</MenuItem>
+          {hasProject && <MenuItem onClick={() => { close(); onTask(); }}><CheckSquare size={15} /> New task</MenuItem>}
           {canManage && <MenuItem onClick={() => { close(); onProject(); }}><Folder size={15} /> New project</MenuItem>}
         </>
       )}

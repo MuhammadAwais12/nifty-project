@@ -1,6 +1,8 @@
 'use client';
 import { createContext, useContext, useEffect, useRef, useState, ReactNode } from 'react';
 import { act, toast } from '@/lib/api';
+import { marked } from 'marked';
+import DOMPurify from 'dompurify';
 import { X, Flag, Loader2 } from 'lucide-react';
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
 
@@ -27,7 +29,6 @@ export type AppCtx = {
   timer: any | null;
   unread: number;
   dmUnread: number;
-  channelUnread: number;
   /** false for guests, who can only view, comment and share files */
   canEdit: boolean;
   /** true for managers, admins and the owner: can create projects and manage members */
@@ -326,6 +327,28 @@ export function RichText({ text, className = '' }: { text: string; className?: s
       })}
     </p>
   );
+}
+
+/**
+ * Markdown rendered as rich text: links are clickable, lists and headings work,
+ * and @mentions keep their highlight.
+ */
+export function Markdown({ text, className = '' }: { text: string; className?: string }) {
+  const { users } = useApp();
+  const [html, setHtml] = useState('');
+  useEffect(() => {
+    const out = marked.parse(text || '', { async: false, gfm: true, breaks: true }) as string;
+    const names = users.map((u) => u.name).filter(Boolean).sort((a, b) => b.length - a.length).map(escapeRe);
+    // highlight @mentions only in text nodes, never inside a tag or an href
+    const mention = names.length ? new RegExp(`@(?:${names.join('|')})`, 'g') : null;
+    const marked_up = mention
+      ? out.split(/(<[^>]+>)/g).map((chunk) => (chunk.startsWith('<') ? chunk : chunk.replace(mention, (m) => `<span class="tt-mention">${m}</span>`))).join('')
+      : out;
+    const clean = DOMPurify.sanitize(marked_up, { ADD_ATTR: ['target', 'rel'] });
+    // links in a task description usually point elsewhere: keep the task open
+    setHtml(clean.replace(/<a /g, '<a target="_blank" rel="noopener noreferrer" '));
+  }, [text, users]);
+  return <div className={`prose-doc break-words ${className}`} dangerouslySetInnerHTML={{ __html: html }} />;
 }
 
 /** Textarea that suggests people when you type @. Enter sends, Shift+Enter adds a line. */

@@ -34,7 +34,7 @@ export function useNotifications() {
   }, []);
 
   // poll the bell so we can raise a notification the moment something lands
-  const { data: list } = useQ<any[]>(on ? 'notif.list' : null, undefined, { refreshInterval: 20000 });
+  const { data: list } = useQ<any[]>(on ? 'notif.list' : null, undefined, { refreshInterval: 10000 });
 
   useEffect(() => {
     if (!on || !list) return;
@@ -47,7 +47,12 @@ export function useNotifications() {
     for (const n of fresh) {
       seen.current.add(n.id);
       try {
-        const note = new Notification('Teqnite Tasks', { body: n.text, tag: n.id, icon: '/icon-192.png' });
+        const who = n.actor_name || 'Someone';
+        const note = new Notification(`${who} — Teqnite Tasks`, {
+          body: `${who} ${n.text}`,
+          tag: n.id,
+          icon: '/icon-192.png',
+        });
         note.onclick = () => {
           window.focus();
           router.push(n.link || (n.task_id ? `/tasks/${n.task_id}` : '/'));

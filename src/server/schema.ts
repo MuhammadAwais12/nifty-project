@@ -286,4 +286,16 @@ update portfolios f set position = n.seq from (
   select id, (row_number() over (order by created_at, name)) - 1 as seq from portfolios
 ) n where f.id = n.id and not exists (select 1 from settings where key = 'portfolios_migrated');
 insert into settings (key, value) values ('portfolios_migrated', '1') on conflict (key) do nothing;
+
+/* ── v8: indexes for the queries that run on every poll ── */
+create index if not exists tasks_project_parent_idx on tasks(project_id, parent_id);
+create index if not exists tasks_due_open_idx on tasks(project_id, due_date) where completed_at is null;
+create index if not exists notifications_unread_idx on notifications(user_id, read, created_at desc);
+create index if not exists notifications_project_idx on notifications(user_id, project_id) where not read;
+create index if not exists messages_project_created_idx on messages(project_id, created_at desc);
+create index if not exists comments_task_idx on comments(task_id, created_at);
+create index if not exists time_entries_task_idx on time_entries(task_id);
+create index if not exists time_entries_open_idx on time_entries(user_id) where ended_at is null;
+create index if not exists project_members_user_idx on project_members(user_id);
+create index if not exists dm_messages_conv_idx on dm_messages(conversation_id, created_at desc);
 `;

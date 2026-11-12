@@ -25,7 +25,9 @@ export function db(): postgres.Sql<any> {
     g.__tt_sql = postgres(url, {
       ssl: local ? false : 'require',
       prepare: false, // required for pooled connections (Neon pooler, Supabase pgbouncer)
-      max: 5,
+      // one connection per serverless instance: many lambdas each holding a pool
+      // is what exhausts a Neon or Supabase connection limit and takes the app down
+      max: process.env.VERCEL ? 1 : 10,
       idle_timeout: 20,
       connect_timeout: 15,
       onnotice: () => {},

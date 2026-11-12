@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import {
   LayoutGrid, CheckSquare, BarChart3, Users, Plus, Menu as MenuIcon, LogOut, UserCog, Square, X, Bell,
-  MessagesSquare, CheckCheck, Hash, PanelLeftClose, PanelLeftOpen, Search, ChevronDown,
+  MessagesSquare, CheckCheck, PanelLeftClose, PanelLeftOpen, Search, ChevronDown,
 } from 'lucide-react';
 import { act, rpc, useQ } from '@/lib/api';
 import {
@@ -92,7 +92,7 @@ const NAV = [
 
 function NotificationsPanel({ users, onClose, notify }: { users: any[]; onClose: () => void; notify: ReturnType<typeof useNotifications> }) {
   const router = useRouter();
-  const { data } = useQ<any[]>('notif.list', undefined, { refreshInterval: 15000 });
+  const { data } = useQ<any[]>('notif.list', undefined, { refreshInterval: 8000 });
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
     window.addEventListener('keydown', onKey);
@@ -117,12 +117,12 @@ function NotificationsPanel({ users, onClose, notify }: { users: any[]; onClose:
           {!data && <Spinner />}
           {data && !data.length && <p className="px-4 py-10 text-center text-sm text-fg/50">Nothing yet. You&apos;ll hear about assignments, comments and @mentions here.</p>}
           {data?.map((n) => {
-            const actor = users.find((u) => u.id === n.actor_id);
+            const actor = users.find((u) => u.id === n.actor_id) || (n.actor_name ? { name: n.actor_name, color: '#8a8a99' } : undefined);
             return (
               <button key={n.id} onClick={() => open(n)} className={`flex w-full gap-2.5 rounded-xl px-3 py-2.5 text-left hover:bg-fg/5 ${n.read ? 'opacity-60' : ''}`}>
                 <Avatar user={actor} size={28} />
                 <span className="min-w-0 flex-1">
-                  <span className="block text-sm leading-snug"><span className="font-bold">{actor?.name.split(' ')[0] || 'Someone'}</span> {n.text}</span>
+                  <span className="block text-sm leading-snug"><span className="font-bold">{actor?.name || 'Someone'}</span> {n.text}</span>
                   <span className="block truncate text-[11px] text-fg/45">{n.project_name ? `${n.project_name} · ` : ''}{fmtDateTime(n.created_at)}</span>
                 </span>
                 {!n.read && <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-ember" aria-label="Unread" />}
@@ -151,7 +151,7 @@ function OpenTask() {
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
-  const { data, error } = useQ('bootstrap', undefined, { refreshInterval: 15000 });
+  const { data, error } = useQ('bootstrap', undefined, { refreshInterval: 8000 });
   const [bell, setBell] = useState(false);
   const [newProject, setNewProject] = useState<null | { portfolioId: string | null }>(null);
   const [newTask, setNewTask] = useState(false);
@@ -165,6 +165,11 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const notify = useNotifications();
 
   useEffect(() => { if (error?.status === 401) router.replace('/login'); }, [error, router]);
+  // in the desktop app, put the unread count on the dock, taskbar and tray
+  useEffect(() => {
+    if (!data) return;
+    (window as any).teqniteDesktop?.setBadge((data.unread || 0) + (data.dmUnread || 0));
+  }, [data]);
   useEffect(() => setNavOpen(false), [pathname]);
   useEffect(() => { try { setCollapsed(localStorage.getItem('tt-rail') === '1'); } catch {} }, []);
   function toggleRail() {
@@ -212,7 +217,13 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     );
   }
 
-  const active = ctx.projects.filter((p: any) => !p.archived && p.name.toLowerCase().includes(filter.toLowerCase()));
+  const teammates = ctx.users.filter(
+    (u: any) => u.active && u.role !== 'guest' && u.id !== ctx.me.id && u.name.toLowerCase().includes(filter.toLowerCase())
+  );
+  async function startChat(userId: string) {
+    const res = await act('dm.open', { userIds: [userId] });
+    if (res) router.push(`/chat?c=${res.id}`);
+  }
   const nav = NAV.filter((n) => RANK[ctx.me.role as keyof typeof RANK] >= RANK[n.min as keyof typeof RANK]);
   const projectTitle = ctx.projects.find((p: any) => pathname === `/projects/${p.id}`)?.name;
 
@@ -270,7 +281,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             <div className="mt-2 flex items-center gap-1.5 px-3">
               <span className="relative flex-1">
                 <Search size={13} className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-white/35" />
-                <input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder={tab === 'projects' ? 'Search projects…' : 'Search channels…'} aria-label="Filter list"
+                <input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder={tab === 'projects' ? 'Search projects…' : 'Search people…'} aria-label="Filter list"
                   className="w-full rounded-lg bg-white/5 py-1.5 pl-7 pr-2 text-xs text-white placeholder:text-white/35 focus:bg-white/10 focus:outline-none" />
               </span>
               {tab === 'projects' && ctx.canManage && (
@@ -283,20 +294,24 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                 <ProjectNav filter={filter} onNewProject={(portfolioId) => setNewProject({ portfolioId })} />
               ) : (
                 <div className="px-2 pb-3">
-                  {active.map((p: any) => (
-                    <Link key={p.id} href={`/chat?p=${p.id}`} className="flex items-center gap-2.5 rounded-lg px-3 py-1.5 text-sm text-white/65 hover:bg-white/5 hover:text-white">
-                      <Hash size={13} className="shrink-0 text-white/40" />
-                      <span className={`truncate ${p.chat_unread ? 'font-bold text-white' : ''}`}>{p.name}</span>
-                      {p.chat_unread > 0 && <span className="ml-auto flex h-4 min-w-4 items-center justify-center rounded-full bg-ember px-1 text-[10px] font-bold">{p.chat_unread}</span>}
-                    </Link>
-                  ))}
-                  {ctx.canEdit && (
-                    <Link href="/chat" className="mt-2 flex items-center gap-2.5 rounded-lg px-3 py-1.5 text-sm text-white/55 hover:bg-white/5 hover:text-white">
-                      <MessagesSquare size={13} /> Direct messages
-                      {ctx.dmUnread > 0 && <span className="ml-auto flex h-4 min-w-4 items-center justify-center rounded-full bg-ember px-1 text-[10px] font-bold">{ctx.dmUnread}</span>}
-                    </Link>
+                  {ctx.canEdit ? (
+                    <>
+                      {teammates.map((u: any) => (
+                        <button key={u.id} onClick={() => startChat(u.id)}
+                          className="flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left text-sm text-white/65 hover:bg-white/5 hover:text-white">
+                          <Avatar user={u} size={24} ring={false} />
+                          <span className="min-w-0 flex-1 truncate">{u.name}</span>
+                        </button>
+                      ))}
+                      {!teammates.length && <p className="px-3 py-2 text-sm text-white/40">{filter ? 'No match.' : 'No teammates yet.'}</p>}
+                      <Link href="/chat" className="mt-2 flex items-center gap-2.5 rounded-lg px-3 py-1.5 text-sm font-semibold text-white/55 hover:bg-white/5 hover:text-white">
+                        <MessagesSquare size={14} /> All messages
+                        {ctx.dmUnread > 0 && <span className="ml-auto flex h-4 min-w-4 items-center justify-center rounded-full bg-ember px-1 text-[10px] font-bold">{ctx.dmUnread}</span>}
+                      </Link>
+                    </>
+                  ) : (
+                    <p className="px-3 py-2 text-sm text-white/40">Guests take part in each project&apos;s Discussions.</p>
                   )}
-                  {!active.length && <p className="px-3 py-2 text-sm text-white/40">No channels yet.</p>}
                 </div>
               )}
             </div>

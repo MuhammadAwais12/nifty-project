@@ -35,7 +35,16 @@ function ProjectRow({ p, onDragStart }: { p: any; onDragStart: (id: string) => v
         <span className="h-2.5 w-2.5 shrink-0 rounded-[4px]" style={{ background: p.color }} />
         <span className={`truncate ${on ? 'font-semibold' : ''}`}>{p.name}</span>
       </Link>
-      {p.overdue_count > 0 && <span className="shrink-0 text-[10px] font-bold text-ember">{p.overdue_count}</span>}
+      {(() => {
+        const news = (p.chat_unread || 0) + (p.notif_unread || 0);
+        if (news > 0) {
+          return <span className="flex h-[18px] min-w-[18px] shrink-0 items-center justify-center rounded-full bg-ember px-1 text-[10px] font-bold text-white">{news > 99 ? '99+' : news}</span>;
+        }
+        if (p.overdue_count > 0) {
+          return <span className="shrink-0 text-[10px] font-bold text-ember" title={`${p.overdue_count} overdue`}>{p.overdue_count}</span>;
+        }
+        return null;
+      })()}
       {canManage && (
         <Menu
           align="left"

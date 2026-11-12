@@ -4,7 +4,8 @@ import { TaskView } from './TaskView';
 
 /**
  * The task sliding over whatever you were looking at, Nifty-style:
- * a strip of the board stays visible on the left so you keep your place.
+ * a strip of the board stays visible on the left so you keep your place —
+ * wide enough on a big screen to read the column you came from.
  */
 export function TaskPanel({ id, onClose }: { id: string; onClose: () => void }) {
   useEffect(() => {
@@ -22,7 +23,7 @@ export function TaskPanel({ id, onClose }: { id: string; onClose: () => void }) 
       <div
         role="dialog"
         aria-label="Task"
-        className="absolute inset-y-0 right-0 left-0 flex flex-col overflow-hidden border-l border-line bg-surface shadow-pop md:left-[120px] lg:left-[240px] lg:rounded-l-2xl"
+        className="absolute inset-y-0 right-0 left-0 flex flex-col overflow-hidden border-l border-line bg-surface shadow-pop md:left-[140px] lg:left-[380px] xl:left-[520px] lg:rounded-l-2xl"
       >
         <TaskView id={id} onClose={onClose} />
       </div>

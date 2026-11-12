@@ -61,6 +61,9 @@
 .prose-doc a { @apply text-ember underline; }
 .prose-doc code { @apply rounded bg-fg/5 px-1 py-0.5 text-[13px]; }
 .prose-doc pre { @apply my-3 overflow-x-auto rounded-lg bg-ink p-3 text-[13px] text-white; }
+.tt-mention { @apply rounded bg-ember/15 px-1 font-semibold text-ember; }
+.prose-doc > :first-child { @apply mt-0; }
+.prose-doc > :last-child { @apply mb-0; }
 .dark .prose-doc pre { @apply bg-black/40; }
 .prose-doc pre code { @apply bg-transparent p-0; }
 .prose-doc blockquote { @apply my-3 border-l-4 border-line pl-3 text-fg/70; }

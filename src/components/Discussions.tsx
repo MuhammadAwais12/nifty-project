@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { CornerUpLeft, ListPlus, MessageSquare, Pencil, Send, Trash2, X } from 'lucide-react';
+import { CornerUpLeft, MessageSquare, Pencil, Send, Trash2, X } from 'lucide-react';
 import { act, refresh, rpc, toast, useQ } from '@/lib/api';
 import { Avatar, Empty, MentionInput, RichText, Spinner, confirmDelete, fmtDateTime, useApp, useProjectPeople, ymd } from './ui';
 import { AttachButton, AttachmentList, PendingAttachments, useAttachments } from './Attach';
@@ -8,7 +8,7 @@ import { AttachButton, AttachmentList, PendingAttachments, useAttachments } from
 export function Discussions({ projectId, members }: { projectId: string; members: string[] }) {
   const { users, me, canEdit, isAdmin } = useApp();
   const people = useProjectPeople(projectId, members);
-  const { data } = useQ<any[]>('message.list', { projectId }, { refreshInterval: 5000 });
+  const { data } = useQ<any[]>('message.list', { projectId }, { refreshInterval: 4000 });
   const [body, setBody] = useState('');
   const [replyTo, setReplyTo] = useState<any | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
@@ -18,6 +18,12 @@ export function Discussions({ projectId, members }: { projectId: string; members
   const count = data?.length || 0;
 
   useEffect(() => { endRef.current?.scrollIntoView({ block: 'end' }); }, [count]);
+  // reading the discussion clears this project's badge
+  useEffect(() => {
+    if (!data) return;
+    rpc('channel.read', { projectId }).then(refresh).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId, count]);
 
   /** Top-level messages, each with its replies underneath. */
   const threads = useMemo(() => {
@@ -53,12 +59,6 @@ export function Discussions({ projectId, members }: { projectId: string; members
     setEditing(null);
     if (text) await act('message.update', { id, body: text });
   }
-  async function toTask(m: any) {
-    const title = (m.body || 'Attachment').split('\n')[0].slice(0, 140);
-    const res = await act('task.create', { projectId, title, description: m.body && m.body.length > title.length ? m.body : '' });
-    if (res) toast('Task created from message');
-  }
-
   if (!data) return <Spinner />;
 
   function renderMessage(m: any, reply = false) {
@@ -91,7 +91,6 @@ export function Discussions({ projectId, members }: { projectId: string; members
         </div>
         <div className="absolute right-2 top-0 hidden -translate-y-1/2 gap-0.5 rounded-lg border border-line bg-surface p-0.5 shadow-card group-hover:flex group-focus-within:flex">
           {!reply && <button className="icon-btn" title="Reply" aria-label="Reply to message" onClick={() => { setReplyTo(m); setEditing(null); }}><CornerUpLeft size={14} /></button>}
-          {canEdit && <button className="icon-btn" title="Create task from message" aria-label="Create task from message" onClick={() => toTask(m)}><ListPlus size={14} /></button>}
           {mine && <button className="icon-btn" title="Edit" aria-label="Edit message" onClick={() => { setEditing(m.id); setDraft(m.body); }}><Pencil size={14} /></button>}
           {(mine || isAdmin) && (
             <button className="icon-btn hover:text-red-600" title="Delete" aria-label="Delete message"

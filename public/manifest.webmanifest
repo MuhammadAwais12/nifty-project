@@ -1,9 +1,23 @@
 {
+  "id": "/",
   "name": "Teqnite Tasks",
   "short_name": "Teqnite Tasks",
+  "description": "Projects, tasks, milestones, discussions, docs and time tracking for the Teqnite team.",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone"],
   "background_color": "#0f101a",
   "theme_color": "#ff5a36",
-  "icons": [{ "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" }]
+  "orientation": "any",
+  "categories": ["productivity", "business"],
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "My work", "url": "/my-work", "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }] },
+    { "name": "Chat", "url": "/chat", "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }] }
+  ]
 }

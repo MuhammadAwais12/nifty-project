@@ -97,7 +97,7 @@ async function notify(
       select u.id, ${actor.id}, ${n.projectId || null}, ${n.taskId || null}, ${n.kind}, ${n.text}, ${link}
       from users u where u.id = ${uid} and u.active returning id`;
     // a desktop notification, for anyone who has turned them on
-    if (made.length) await sendPush(uid, { title: actor.name, body: n.text, url: link, tag: n.kind });
+    if (made.length) await sendPush(uid, { title: `${actor.name} — Teqnite Tasks`, body: `${actor.name} ${n.text}`, url: link, tag: n.kind });
   }
 }
 
@@ -199,16 +199,53 @@ export const handlers: Record<string, Handler> = {
       : sql``;
     const [users, projects, portfolios, timer, unread, dm] = await Promise.all([
       sql`select u.id, u.name, u.email, u.role, u.color, u.avatar_url, u.active from users u ${visibleUsers} order by u.name`,
-      sql`select p.*,
-          (select count(*)::int from tasks t where t.project_id = p.id and t.parent_id is null) as task_count,
-          (select count(*)::int from tasks t where t.project_id = p.id and t.parent_id is null and t.completed_at is not null) as done_count,
-          (select count(*)::int from tasks t where t.project_id = p.id and t.parent_id is null and t.completed_at is null and t.due_date < current_date) as overdue_count,
-          (select row_to_json(m) from (select name, end_date from milestones m where m.project_id = p.id and m.end_date >= current_date order by end_date limit 1) m) as next_milestone,
-          (select coalesce(jsonb_agg(pm.user_id), '[]') from project_members pm where pm.project_id = p.id) as member_ids,
-          (select count(*)::int from messages g where g.project_id = p.id
-            and g.user_id is distinct from ${user.id}
-            and g.created_at > coalesce((select cr.last_read_at from channel_reads cr where cr.project_id = p.id and cr.user_id = ${user.id}), 'epoch'::timestamptz)) as chat_unread
-        from projects p ${mine} order by p.archived, p.created_at`,
+      // the counts are gathered in one pass each rather than as subqueries per
+      // project, so a workspace with fifty projects still answers quickly
+      sql`
+        with counts as (
+          select project_id,
+            count(*) filter (where parent_id is null)::int as task_count,
+            count(*) filter (where parent_id is null and completed_at is not null)::int as done_count,
+            count(*) filter (where parent_id is null and completed_at is null and due_date < current_date)::int as overdue_count
+          from tasks group by project_id
+        ),
+        members as (
+          select project_id, jsonb_agg(user_id) as member_ids from project_members group by project_id
+        ),
+        reads as (
+          select project_id, last_read_at from channel_reads where user_id = ${user.id}
+        ),
+        chat as (
+          select m.project_id, count(*)::int as chat_unread
+          from messages m left join reads r on r.project_id = m.project_id
+          where m.user_id is distinct from ${user.id}
+            and m.created_at > coalesce(r.last_read_at, 'epoch'::timestamptz)
+          group by m.project_id
+        ),
+        news as (
+          select project_id, count(*)::int as n from notifications
+          where user_id = ${user.id} and not read and project_id is not null group by project_id
+        ),
+        next_milestone as (
+          select distinct on (project_id) project_id, name, end_date
+          from milestones where end_date >= current_date order by project_id, end_date
+        )
+        select p.*,
+          coalesce(c.task_count, 0) as task_count,
+          coalesce(c.done_count, 0) as done_count,
+          coalesce(c.overdue_count, 0) as overdue_count,
+          coalesce(m.member_ids, '[]'::jsonb) as member_ids,
+          coalesce(ch.chat_unread, 0) as chat_unread,
+          coalesce(nw.n, 0) as notif_unread,
+          case when nm.project_id is null then null
+               else jsonb_build_object('name', nm.name, 'end_date', nm.end_date) end as next_milestone
+        from projects p
+        left join counts c on c.project_id = p.id
+        left join members m on m.project_id = p.id
+        left join chat ch on ch.project_id = p.id
+        left join news nw on nw.project_id = p.id
+        left join next_milestone nm on nm.project_id = p.id
+        ${mine} order by p.archived, p.created_at`,
       sql`select f.id, f.name, f.color, f.position,
           (select count(*)::int from projects p where p.portfolio_id = f.id) as project_count
         from portfolios f order by f.position, f.name`,
@@ -219,8 +256,7 @@ export const handlers: Record<string, Handler> = {
       sql`select count(*)::int as n from conversation_members me
         where me.user_id = ${user.id} and exists (select 1 from dm_messages d where d.conversation_id = me.conversation_id and d.created_at > me.last_read_at and d.user_id is distinct from ${user.id})`,
     ]);
-    const channelUnread = projects.reduce((n: number, p: any) => n + (p.chat_unread || 0), 0);
-    return { me: user, users, projects, portfolios, timer: timer[0] || null, unread: unread[0].n, dmUnread: dm[0].n + channelUnread, channelUnread };
+    return { me: user, users, projects, portfolios, timer: timer[0] || null, unread: unread[0].n, dmUnread: dm[0].n };
   },
 
   /** Marks a project's chat channel as read up to now. */
@@ -798,8 +834,11 @@ export const handlers: Record<string, Handler> = {
 
   /* ───────────── notifications ───────────── */
   async 'notif.list'(_p, { user }) {
-    return db()`select n.id, n.actor_id, n.project_id, n.task_id, n.kind, n.text, n.link, n.read, n.created_at, p.name as project_name
-      from notifications n left join projects p on p.id = n.project_id
+    return db()`select n.id, n.actor_id, n.project_id, n.task_id, n.kind, n.text, n.link, n.read, n.created_at,
+        p.name as project_name, a.name as actor_name
+      from notifications n
+        left join projects p on p.id = n.project_id
+        left join users a on a.id = n.actor_id
       where n.user_id = ${user.id} order by n.created_at desc limit 60`;
   },
 

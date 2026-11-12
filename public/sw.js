@@ -2,6 +2,10 @@
 self.addEventListener('install', () => self.skipWaiting());
 self.addEventListener('activate', (e) => e.waitUntil(self.clients.claim()));
 
+/* Teqnite Tasks always needs the server, so nothing is cached here.
+   The handler exists because some browsers look for one before offering to install. */
+self.addEventListener('fetch', () => {});
+
 self.addEventListener('push', (event) => {
   let data = { title: 'Teqnite Tasks', body: 'You have a new notification', url: '/' };
   try {
